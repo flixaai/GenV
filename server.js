@@ -623,33 +623,96 @@ async function generateVideoOnPage(account, params, taskId) {
 
   await restoreSessionToPage(page, account);
   await page.goto(VIDEO_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-
-  // Disengaja stuck di 5% untuk keperluan memancing keluar JSON Debug
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  emitLog(`[${account.email}] Mengekstrak data web SnapGen...`);
-  await sleep(10000); // Tunggu elemen loading hilang
+  // 1. Tunggu Textarea Prompt Muncul
+  const promptSelector = 'textarea[placeholder*="video" i]';
+  await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  const dumpData = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
-      tag: el.tagName,
-      type: el.type || '',
-      name: el.name || '',
-      id: el.id || '',
-      className: el.className || '',
-      placeholder: el.placeholder || '',
-      text: el.innerText ? el.innerText.substring(0, 100) : '',
-      ariaLabel: el.getAttribute('aria-label') || ''
-    }));
-  });
+  await page.click(promptSelector);
+  await page.type(promptSelector, params.prompt, { delay: 10 });
 
-  const dumpPath = path.join(DEBUG_DIR, `${account.id}_videogen-dump.json`);
-  await fs.writeJson(dumpPath, dumpData, { spaces: 2 }).catch(() => {});
-  
-  emitLog(`[DEBUG] Dump Video Gen: /debug/${account.id}_videogen-dump.json`);
-  
+  // 2. Helper Cerdas untuk klik tombol setingan (Resolusi, Aspek Rasio, Durasi)
+  const clickAria = async (lbl) => {
+    if (!lbl) return;
+    const btn = await page.$(`button[aria-label="${lbl}"]`);
+    if (btn) await btn.click().catch(() => {});
+  };
+
+  const clickText = async (txt) => {
+    await page.evaluate((textToFind) => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const target = btns.find(b => b.innerText && b.innerText.trim().includes(textToFind));
+      if (target) target.click();
+    }, txt);
+  };
+
+  // 3. Terapkan Parameter User
+  await clickAria(params.orientation); // contoh: "16:9"
+  await clickAria(params.resolution);  // contoh: "720p"
+  await clickAria(String(params.duration)); // contoh: "8"
+
+  // 4. Image Reference (Jika ada)
+  if (params.imageReference && params.imageReference.localPath) {
+    const fileInputs = await page.$$('input[type="file"]');
+    if (fileInputs.length > 0) {
+      await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
+    }
+  }
+
+  // 5. Bypass Captcha (Jika Terdeteksi)
+  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
+  if (autoSolve && capKey) {
+    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
+  }
+
+  emitProgress(taskId, { status: 'processing', progress: 15 });
+
+  // 6. Simpan daftar video sebelum klik generate
+  const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
+
+  // 7. Klik tombol "Generate Video"
+  await clickText('Generate Video');
+
+  // 8. Tunggu Hasil Selesai
+  let progress = 15, completed = false, resultUrl = null;
+
+  for (let i = 0; i < 120; i++) {
+    await sleep(5000);
+
+    // Update Progress Bar
+    const pct = await page.evaluate(() => {
+       const match = document.body.innerText.match(/(\d+)%/);
+       return match ? parseInt(match[1]) : null;
+    });
+    if (pct && pct > progress) progress = pct;
+
+    // Cek apakah ada video baru yang muncul
+    const currentVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
+    const newVideo = currentVideos.find(src => src && !existingVideos.includes(src) && !src.startsWith('data:'));
+
+    if (newVideo) {
+      resultUrl = newVideo;
+      completed = true;
+      progress = 100;
+    }
+
+    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
+    if (completed) break;
+  }
+
+  if (!completed || !resultUrl) {
+    await page.close().catch(() => {});
+    throw new Error('Generate video timeout atau gagal mendapatkan hasil');
+  }
+
+  // 9. Download Hasil Video
+  const fileName = `video_${taskId}.mp4`;
+  const localPath = path.join(DOWNLOADS_DIR, fileName);
+  await downloadRemoteFile(page, resultUrl, localPath);
   await page.close().catch(() => {});
-  throw new Error(`MODE DEBUG AKTIF: Sistem sengaja dihentikan. Buka link /debug/${account.id}_videogen-dump.json di log terminal Anda.`);
+
+  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
 }
 
 /* ===================================================================
@@ -663,33 +726,109 @@ async function generateImageOnPage(account, params, taskId) {
 
   await restoreSessionToPage(page, account);
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-
-  // Disengaja stuck di 5% untuk keperluan memancing keluar JSON Debug
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  emitLog(`[${account.email}] Mengekstrak data web SnapGen (Image)...`);
-  await sleep(10000); // Tunggu elemen loading hilang
+  // 1. Tunggu Textarea Prompt Muncul
+  const promptSelector = 'textarea[placeholder*="image" i]';
+  await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  const dumpData = await page.evaluate(() => {
-    return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
-      tag: el.tagName,
-      type: el.type || '',
-      name: el.name || '',
-      id: el.id || '',
-      className: el.className || '',
-      placeholder: el.placeholder || '',
-      text: el.innerText ? el.innerText.substring(0, 100) : '',
-      ariaLabel: el.getAttribute('aria-label') || ''
-    }));
-  });
+  await page.click(promptSelector);
+  await page.type(promptSelector, params.prompt, { delay: 10 });
 
-  const dumpPath = path.join(DEBUG_DIR, `${account.id}_imagegen-dump.json`);
-  await fs.writeJson(dumpPath, dumpData, { spaces: 2 }).catch(() => {});
-  
-  emitLog(`[DEBUG] Dump Image Gen: /debug/${account.id}_imagegen-dump.json`);
-  
+  // 2. Helper Cerdas untuk klik tombol setingan
+  const clickAria = async (lbl) => {
+    if (!lbl) return;
+    const btn = await page.$(`button[aria-label="${lbl}"]`);
+    if (btn) await btn.click().catch(() => {});
+  };
+
+  const clickText = async (txt) => {
+    await page.evaluate((textToFind) => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const target = btns.find(b => b.innerText && b.innerText.trim().includes(textToFind));
+      if (target) target.click();
+    }, txt);
+  };
+
+  // 3. Terapkan Parameter User
+  await clickAria(params.aspect_ratio); // contoh: "9:16"
+  await clickAria(params.resolution);   // contoh: "1K"
+
+  // 4. Image Reference Upload (Tombol "Select Image")
+  if (params.imageReference && params.imageReference.localPath) {
+    const fileInputs = await page.$$('input[type="file"]');
+    if (fileInputs.length > 0) {
+      await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
+    } else {
+      await clickText('Select Image');
+      await sleep(1000);
+      const hiddenInputs = await page.$$('input[type="file"]');
+      if (hiddenInputs.length > 0) {
+         await hiddenInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
+      }
+    }
+  }
+
+  // 5. Bypass Captcha (Jika Terdeteksi)
+  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
+  if (autoSolve && capKey) {
+    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
+  }
+
+  emitProgress(taskId, { status: 'processing', progress: 20 });
+
+  // 6. Simpan daftar gambar sebelum klik generate
+  const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
+
+  // 7. Klik tombol "Generate"
+  await clickText('Generate');
+
+  // 8. Tunggu Hasil Selesai
+  let progress = 20, completed = false, resultUrl = null;
+
+  for (let i = 0; i < 60; i++) {
+    await sleep(3000);
+
+    // Update Progress Bar
+    const pct = await page.evaluate(() => {
+       const match = document.body.innerText.match(/(\d+)%/);
+       return match ? parseInt(match[1]) : null;
+    });
+    if (pct && pct > progress) progress = pct;
+
+    // Cek apakah ada gambar baru yang muncul
+    const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
+    const newImage = currentImages.find(src => 
+      src && 
+      !existingImages.includes(src) && 
+      !src.startsWith('data:') && 
+      !src.includes('avatar') && 
+      !src.includes('logo')
+    );
+
+    if (newImage) {
+      resultUrl = newImage;
+      completed = true;
+      progress = 100;
+    }
+
+    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
+    if (completed) break;
+  }
+
+  if (!completed || !resultUrl) {
+    await page.close().catch(() => {});
+    throw new Error('Generate image timeout atau gagal mendapatkan hasil');
+  }
+
+  // 9. Download Hasil Gambar
+  const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
+  const fileName = `image_${taskId}.${ext}`;
+  const localPath = path.join(DOWNLOADS_DIR, fileName);
+  await downloadRemoteFile(page, resultUrl, localPath);
   await page.close().catch(() => {});
-  throw new Error(`MODE DEBUG AKTIF: Sistem sengaja dihentikan. Buka link /debug/${account.id}_imagegen-dump.json di log terminal Anda.`);
+
+  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
 }
 
 /* ===================================================================
