@@ -750,15 +750,18 @@ async function generateImageOnPage(account, params, taskId) {
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  // Trik Mengetik Paling Realistis
+  // Hack gabungan: Ketik fisik + Bypass React state
+  await page.evaluate((sel, textVal) => {
+    const el = document.querySelector(sel);
+    if(el) {
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      nativeInputValueSetter.call(el, textVal);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+  }, promptSelector, params.prompt);
+  
   await page.click(promptSelector);
-  await page.keyboard.down('Control');
-  await page.keyboard.press('A');
-  await page.keyboard.up('Control');
-  await page.keyboard.press('Backspace');
-  await sleep(500);
-  await page.type(promptSelector, params.prompt, { delay: 50 });
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Space');
   await sleep(1000);
 
   emitLog(`[${account.email}] Memilih rasio & resolusi...`);
@@ -789,7 +792,7 @@ async function generateImageOnPage(account, params, taskId) {
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE (Pakai Mouse Asli)!`);
   
-  // Cari koordinat tombol lalu klik pakai mouse virtual Puppeteer
+  // Cari koordinat tombol lalu klik pakai mouse virtual
   const btnBox = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
@@ -810,7 +813,6 @@ async function generateImageOnPage(account, params, taskId) {
     throw new Error('Tombol Generate masih terkunci oleh website. Cek /debug/BTN-LOCKED.png');
   }
 
-  // KLIK FISIK MOUSE VIRTUAL
   await page.mouse.move(btnBox.x, btnBox.y);
   await sleep(300);
   await page.mouse.click(btnBox.x, btnBox.y);
@@ -820,11 +822,11 @@ async function generateImageOnPage(account, params, taskId) {
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
 
-    // CCTV Bantuan: Ambil foto jika sudah nunggu 30 detik tapi belum beres
+    // CCTV Bantuan
     if (i === 10) {
-       emitLog(`[${account.email}] Cek CCTV Layar...`);
+       emitLog(`[${account.email}] Cek CCTV Layar... (Mencari tahu kenapa lama)`);
        await captureDebugSnapshot(page, account, `STUCK-AT-20`);
-       emitLog(`[📸 CCTV] Cek layar: /debug/${account.id}_STUCK-AT-20.png`);
+       emitLog(`[📸 CCTV] Cek layar di sini: /debug/${account.id}_STUCK-AT-20.png`);
     }
 
     const pct = await page.evaluate(() => {
