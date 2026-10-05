@@ -1163,6 +1163,7 @@ adminRouter.post('/upload', upload.single('file'), (req, res) => {
 
 // ---- DIRECT GENERATE DARI DASHBOARD ----
 adminRouter.post('/generate/video', async (req, res) => {
+  emitLog('Menerima perintah Generate Video dari dashboard...');
   try {
     const body = req.body || {};
     const params = {
@@ -1174,11 +1175,13 @@ adminRouter.post('/generate/video', async (req, res) => {
     const result = await enqueueGenerationJob('video', params, 'dashboard');
     res.json({ success: true, ...result });
   } catch (err) {
+    emitLog(`Gagal memproses request Video: ${err.message}`);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 adminRouter.post('/generate/image', async (req, res) => {
+  emitLog('Menerima perintah Generate Image dari dashboard...');
   try {
     const body = req.body || {};
     const params = {
@@ -1189,6 +1192,7 @@ adminRouter.post('/generate/image', async (req, res) => {
     const result = await enqueueGenerationJob('image', params, 'dashboard');
     res.json({ success: true, ...result });
   } catch (err) {
+    emitLog(`Gagal memproses request Image: ${err.message}`);
     res.status(500).json({ success: false, message: err.message });
   }
 });
