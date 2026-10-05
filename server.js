@@ -529,11 +529,33 @@ async function autoLogin(account) {
     return data;
   });
 
-  const bearerToken = localStorageData['access_token'] || localStorageData['token'] || null;
+  let bearerToken = localStorageData['access_token'] || localStorageData['token'] || null;
+  let parsedCredit = null;
+
+  try {
+    const authStoreRaw = localStorageData['authStore'];
+    if (authStoreRaw) {
+      const authParsed = JSON.parse(authStoreRaw);
+      if (authParsed.access_token) bearerToken = authParsed.access_token;
+      if (authParsed.user && authParsed.user.user_credit) {
+        parsedCredit = authParsed.user.user_credit;
+      }
+    }
+  } catch (e) {
+    logger.warn('Gagal parsing authStore:', e.message);
+  }
+
   const sessionData = { cookies, localStorage: localStorageData, bearerToken, savedAt: new Date().toISOString() };
   await AccountManager.saveSession(account.id, sessionData);
 
-  emitLog(`[${account.email}] ✅ Login berhasil, sesi tersimpan.`);
+  if (parsedCredit) {
+    await AccountManager.update(account.id, {
+      creditsLeft: parsedCredit.available_credit || 0,
+      isUnlimited: false
+    });
+  }
+
+  emitLog(`[${account.email}] ✅ Login berhasil, sesi tersimpan. Kredit: ${parsedCredit ? parsedCredit.available_credit : 'unknown'}`);
   emitAccountUpdate(await AccountManager.getById(account.id));
 
   await page.close().catch(() => {});
