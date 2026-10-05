@@ -728,14 +728,23 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  // 1. Tunggu Textarea Prompt Muncul
+  emitLog(`[${account.email}] Mengetik prompt...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
   await page.click(promptSelector);
   await page.type(promptSelector, params.prompt, { delay: 10 });
+  
+  // Paksa update internal form React
+  await page.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if(el) {
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+  }, promptSelector);
 
-  // 2. Helper Cerdas untuk klik tombol setingan
+  emitLog(`[${account.email}] Memilih rasio & resolusi...`);
   const clickAria = async (lbl) => {
     if (!lbl) return;
     const btn = await page.$(`button[aria-label="${lbl}"]`);
@@ -750,11 +759,9 @@ async function generateImageOnPage(account, params, taskId) {
     }, txt);
   };
 
-  // 3. Terapkan Parameter User
-  await clickAria(params.aspect_ratio); // contoh: "9:16"
-  await clickAria(params.resolution);   // contoh: "1K"
+  await clickAria(params.aspect_ratio); 
+  await clickAria(params.resolution);   
 
-  // 4. Image Reference Upload (Tombol "Select Image")
   if (params.imageReference && params.imageReference.localPath) {
     const fileInputs = await page.$$('input[type="file"]');
     if (fileInputs.length > 0) {
@@ -769,7 +776,6 @@ async function generateImageOnPage(account, params, taskId) {
     }
   }
 
-  // 5. Bypass Captcha (Jika Terdeteksi)
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
     await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
@@ -777,26 +783,27 @@ async function generateImageOnPage(account, params, taskId) {
 
   emitProgress(taskId, { status: 'processing', progress: 20 });
 
-  // 6. Simpan daftar gambar sebelum klik generate
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  // 7. Klik tombol "Generate"
+  // AMBIL BUKTI SNAPSHOT SEBELUM KLIK GENERATE
+  emitLog(`[${account.email}] Form terisi! Mengambil foto bukti...`);
+  await captureDebugSnapshot(page, account, `PRE-GENERATE-IMG`);
+  emitLog(`[📸 Bukti Foto] Buka: /debug/${account.id}_PRE-GENERATE-IMG.png`);
+
+  emitLog(`[${account.email}] KLIK TOMBOL GENERATE! Menunggu hasil...`);
   await clickText('Generate');
 
-  // 8. Tunggu Hasil Selesai
   let progress = 20, completed = false, resultUrl = null;
 
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
 
-    // Update Progress Bar
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
        return match ? parseInt(match[1]) : null;
     });
     if (pct && pct > progress) progress = pct;
 
-    // Cek apakah ada gambar baru yang muncul
     const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
     const newImage = currentImages.find(src => 
       src && 
@@ -810,6 +817,7 @@ async function generateImageOnPage(account, params, taskId) {
       resultUrl = newImage;
       completed = true;
       progress = 100;
+      emitLog(`[${account.email}] 🎉 HASIL GAMBAR DITEMUKAN!`);
     }
 
     emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
@@ -817,11 +825,11 @@ async function generateImageOnPage(account, params, taskId) {
   }
 
   if (!completed || !resultUrl) {
+    await captureDebugSnapshot(page, account, `FAILED-GENERATE-IMG`);
     await page.close().catch(() => {});
-    throw new Error('Generate image timeout atau gagal mendapatkan hasil');
+    throw new Error(`Gagal dapat hasil. Cek foto: /debug/${account.id}_FAILED-GENERATE-IMG.png`);
   }
 
-  // 9. Download Hasil Gambar
   const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
   const fileName = `image_${taskId}.${ext}`;
   const localPath = path.join(DOWNLOADS_DIR, fileName);
