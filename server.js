@@ -746,24 +746,27 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  emitLog(`[${account.email}] Mengetik prompt ala manusia...`);
+  emitLog(`[${account.email}] Mengetik prompt (Bypass React State)...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  // Trik Manusia: Klik 3x untuk select all, hapus, lalu ketik pelan-pelan
-  await page.click(promptSelector, { clickCount: 3 });
-  await page.keyboard.press('Backspace');
-  await sleep(500);
-  await page.type(promptSelector, params.prompt, { delay: 50 }); // Delay 50ms agar terlihat seperti manusia mengetik
-  await page.keyboard.press('Space'); // Pancing react state
-  
-  await page.evaluate((sel) => {
+  // Hack khusus untuk React 16+ agar tombol Generate langsung terbuka
+  await page.evaluate((sel, textVal) => {
     const el = document.querySelector(sel);
     if(el) {
+      // Set value langsung ke inti elemen (Membypass perlindungan React)
+      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
+      nativeInputValueSetter.call(el, textVal);
+      // Paksa tembak event ke React seolah-olah ada orang ngetik
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
     }
-  }, promptSelector);
+  }, promptSelector, params.prompt);
+  
+  // Fokus dan tekan Spasi agar benar-benar meyakinkan browser
+  await page.focus(promptSelector);
+  await page.keyboard.press('Space');
+  await sleep(1000);
 
   emitLog(`[${account.email}] Memilih rasio & resolusi...`);
   const clickAria = async (lbl) => {
@@ -789,20 +792,24 @@ async function generateImageOnPage(account, params, taskId) {
 
   emitProgress(taskId, { status: 'processing', progress: 20 });
   
-  // Ambil semua gambar SEBELUM klik generate untuk perbandingan
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
-  // Cari tombol Generate yang BENAR-BENAR aktif (tidak disabled)
+  // Cari tombol Generate dengan sangat akurat (cek atribut disabled & aria-disabled)
   const clicked = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
-    const target = btns.find(b => b.innerText && b.innerText.trim() === 'Generate' && !b.disabled);
+    const target = btns.find(b => {
+      const txt = b.innerText ? b.innerText.trim() : '';
+      const isGen = txt === 'Generate' || txt === 'Generate Image';
+      const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
+      return isGen && !isLocked;
+    });
     if (target) { target.click(); return true; }
     return false;
   });
 
   if (!clicked) {
-    emitLog(`[ERROR] Tombol Generate tidak bisa diklik! Mungkin masih terkunci.`);
+    emitLog(`[ERROR] Tombol Generate tetap terkunci!`);
     await captureDebugSnapshot(page, account, `BTN-LOCKED`);
     throw new Error('Tombol Generate masih terkunci oleh website. Cek /debug/BTN-LOCKED.png');
   }
@@ -818,7 +825,6 @@ async function generateImageOnPage(account, params, taskId) {
     });
     if (pct && pct > progress) progress = pct;
 
-    // Cek apakah ada gambar BARU yang sumbernya dari AI (bukan gambar es batu/iklan)
     const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
     const newImage = currentImages.find(src => 
       src && 
@@ -826,7 +832,7 @@ async function generateImageOnPage(account, params, taskId) {
       !src.startsWith('data:') && 
       !src.includes('avatar') && 
       !src.includes('logo') &&
-      src.includes('blob') // Hasil AI biasanya pakai link blob/storage, bukan link gambar statis
+      src.includes('blob')
     );
 
     if (newImage) {
