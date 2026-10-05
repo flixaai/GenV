@@ -746,14 +746,17 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  emitLog(`[${account.email}] Mengetik prompt...`);
+  emitLog(`[${account.email}] Mengetik prompt ala manusia...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  await page.click(promptSelector);
-  await page.type(promptSelector, params.prompt, { delay: 10 });
+  // Trik Manusia: Klik 3x untuk select all, hapus, lalu ketik pelan-pelan
+  await page.click(promptSelector, { clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await sleep(500);
+  await page.type(promptSelector, params.prompt, { delay: 50 }); // Delay 50ms agar terlihat seperti manusia mengetik
+  await page.keyboard.press('Space'); // Pancing react state
   
-  // Paksa update internal form React
   await page.evaluate((sel) => {
     const el = document.querySelector(sel);
     if(el) {
@@ -769,14 +772,6 @@ async function generateImageOnPage(account, params, taskId) {
     if (btn) await btn.click().catch(() => {});
   };
 
-  const clickText = async (txt) => {
-    await page.evaluate((textToFind) => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const target = btns.find(b => b.innerText && b.innerText.trim().includes(textToFind));
-      if (target) target.click();
-    }, txt);
-  };
-
   await clickAria(params.aspect_ratio); 
   await clickAria(params.resolution);   
 
@@ -784,13 +779,6 @@ async function generateImageOnPage(account, params, taskId) {
     const fileInputs = await page.$$('input[type="file"]');
     if (fileInputs.length > 0) {
       await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
-    } else {
-      await clickText('Select Image');
-      await sleep(1000);
-      const hiddenInputs = await page.$$('input[type="file"]');
-      if (hiddenInputs.length > 0) {
-         await hiddenInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
-      }
     }
   }
 
@@ -800,16 +788,24 @@ async function generateImageOnPage(account, params, taskId) {
   }
 
   emitProgress(taskId, { status: 'processing', progress: 20 });
-
+  
+  // Ambil semua gambar SEBELUM klik generate untuk perbandingan
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  // AMBIL BUKTI SNAPSHOT SEBELUM KLIK GENERATE
-  emitLog(`[${account.email}] Form terisi! Mengambil foto bukti...`);
-  await captureDebugSnapshot(page, account, `PRE-GENERATE-IMG`);
-  emitLog(`[📸 Bukti Foto] Buka: /debug/${account.id}_PRE-GENERATE-IMG.png`);
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
+  // Cari tombol Generate yang BENAR-BENAR aktif (tidak disabled)
+  const clicked = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find(b => b.innerText && b.innerText.trim() === 'Generate' && !b.disabled);
+    if (target) { target.click(); return true; }
+    return false;
+  });
 
-  emitLog(`[${account.email}] KLIK TOMBOL GENERATE! Menunggu hasil...`);
-  await clickText('Generate');
+  if (!clicked) {
+    emitLog(`[ERROR] Tombol Generate tidak bisa diklik! Mungkin masih terkunci.`);
+    await captureDebugSnapshot(page, account, `BTN-LOCKED`);
+    throw new Error('Tombol Generate masih terkunci oleh website. Cek /debug/BTN-LOCKED.png');
+  }
 
   let progress = 20, completed = false, resultUrl = null;
 
@@ -822,20 +818,22 @@ async function generateImageOnPage(account, params, taskId) {
     });
     if (pct && pct > progress) progress = pct;
 
+    // Cek apakah ada gambar BARU yang sumbernya dari AI (bukan gambar es batu/iklan)
     const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
     const newImage = currentImages.find(src => 
       src && 
       !existingImages.includes(src) && 
       !src.startsWith('data:') && 
       !src.includes('avatar') && 
-      !src.includes('logo')
+      !src.includes('logo') &&
+      src.includes('blob') // Hasil AI biasanya pakai link blob/storage, bukan link gambar statis
     );
 
     if (newImage) {
       resultUrl = newImage;
       completed = true;
       progress = 100;
-      emitLog(`[${account.email}] 🎉 HASIL GAMBAR DITEMUKAN!`);
+      emitLog(`[${account.email}] 🎉 HASIL AI ASLI DITEMUKAN!`);
     }
 
     emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
@@ -845,7 +843,7 @@ async function generateImageOnPage(account, params, taskId) {
   if (!completed || !resultUrl) {
     await captureDebugSnapshot(page, account, `FAILED-GENERATE-IMG`);
     await page.close().catch(() => {});
-    throw new Error(`Gagal dapat hasil. Cek foto: /debug/${account.id}_FAILED-GENERATE-IMG.png`);
+    throw new Error(`Gagal dapat hasil asli. Cek foto: /debug/${account.id}_FAILED-GENERATE-IMG.png`);
   }
 
   const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
