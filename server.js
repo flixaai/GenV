@@ -746,26 +746,19 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  emitLog(`[${account.email}] Mengetik prompt (Bypass React State)...`);
+  emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  // Hack khusus untuk React 16+ agar tombol Generate langsung terbuka
-  await page.evaluate((sel, textVal) => {
-    const el = document.querySelector(sel);
-    if(el) {
-      // Set value langsung ke inti elemen (Membypass perlindungan React)
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-      nativeInputValueSetter.call(el, textVal);
-      // Paksa tembak event ke React seolah-olah ada orang ngetik
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      el.dispatchEvent(new Event('change', { bubbles: true }));
-    }
-  }, promptSelector, params.prompt);
-  
-  // Fokus dan tekan Spasi agar benar-benar meyakinkan browser
-  await page.focus(promptSelector);
-  await page.keyboard.press('Space');
+  // Trik Mengetik Paling Realistis
+  await page.click(promptSelector);
+  await page.keyboard.down('Control');
+  await page.keyboard.press('A');
+  await page.keyboard.up('Control');
+  await page.keyboard.press('Backspace');
+  await sleep(500);
+  await page.type(promptSelector, params.prompt, { delay: 50 });
+  await page.keyboard.press('Enter');
   await sleep(1000);
 
   emitLog(`[${account.email}] Memilih rasio & resolusi...`);
@@ -794,9 +787,10 @@ async function generateImageOnPage(account, params, taskId) {
   
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
-  // Cari tombol Generate dengan sangat akurat (cek atribut disabled & aria-disabled)
-  const clicked = await page.evaluate(() => {
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE (Pakai Mouse Asli)!`);
+  
+  // Cari koordinat tombol lalu klik pakai mouse virtual Puppeteer
+  const btnBox = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
       const txt = b.innerText ? b.innerText.trim() : '';
@@ -804,20 +798,34 @@ async function generateImageOnPage(account, params, taskId) {
       const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
       return isGen && !isLocked;
     });
-    if (target) { target.click(); return true; }
-    return false;
+    if (!target) return null;
+    target.scrollIntoView({ block: 'center' });
+    const rect = target.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   });
 
-  if (!clicked) {
-    emitLog(`[ERROR] Tombol Generate tetap terkunci!`);
+  if (!btnBox) {
+    emitLog(`[ERROR] Tombol Generate tetap terkunci / tidak ketemu!`);
     await captureDebugSnapshot(page, account, `BTN-LOCKED`);
     throw new Error('Tombol Generate masih terkunci oleh website. Cek /debug/BTN-LOCKED.png');
   }
+
+  // KLIK FISIK MOUSE VIRTUAL
+  await page.mouse.move(btnBox.x, btnBox.y);
+  await sleep(300);
+  await page.mouse.click(btnBox.x, btnBox.y);
 
   let progress = 20, completed = false, resultUrl = null;
 
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
+
+    // CCTV Bantuan: Ambil foto jika sudah nunggu 30 detik tapi belum beres
+    if (i === 10) {
+       emitLog(`[${account.email}] Cek CCTV Layar... (Mencari tahu kenapa lama)`);
+       await captureDebugSnapshot(page, account, `STUCK-AT-20`);
+       emitLog(`[📸 CCTV] Cek layar di sini: /debug/${account.id}_STUCK-AT-20.png`);
+    }
 
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
