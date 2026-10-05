@@ -1,0 +1,1001 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SnapGen AI Wrapper — Admin Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<script src="/socket.io/socket.io.js"></script>
+<style>
+  body { font-family: 'Segoe UI', Tahoma, sans-serif; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-thumb { background: #6366f1; border-radius: 10px; }
+  .tab-btn.active { background-color: #4f46e5; color: white; }
+  .modal-overlay { background: rgba(0,0,0,0.5); }
+  pre { white-space: pre-wrap; word-break: break-word; }
+</style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+
+<!-- ========================= LOGIN SCREEN ========================= -->
+<div id="loginScreen" class="fixed inset-0 bg-gray-900 flex items-center justify-center z-50 hidden">
+  <div class="bg-gray-800 p-8 rounded-2xl shadow-2xl w-96">
+    <h1 class="text-2xl font-bold text-white mb-6 text-center">
+      <i class="fa-solid fa-robot text-indigo-400"></i> SnapGen Wrapper
+    </h1>
+    <form id="loginForm" class="space-y-4">
+      <input type="text" id="loginUsername" placeholder="Username" class="w-full p-3 rounded bg-gray-700 text-white outline-none" required>
+      <input type="password" id="loginPassword" placeholder="Password" class="w-full p-3 rounded bg-gray-700 text-white outline-none" required>
+      <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white p-3 rounded font-semibold transition">
+        <i class="fa fa-right-to-bracket"></i> Login
+      </button>
+      <p id="loginError" class="text-red-400 text-sm hidden text-center">Username/password salah!</p>
+    </form>
+  </div>
+</div>
+
+<!-- ========================= MAIN APP ========================= -->
+<div id="mainApp" class="hidden">
+
+  <!-- NAVBAR -->
+  <nav class="bg-gray-900 text-white px-4 md:px-6 py-4 flex flex-wrap items-center justify-between shadow sticky top-0 z-40 gap-3">
+    <div class="flex items-center gap-3">
+      <i class="fa-solid fa-robot text-indigo-400 text-xl"></i>
+      <span class="font-bold text-lg">SnapGen Wrapper Admin</span>
+    </div>
+    <div class="flex items-center gap-4 text-sm flex-wrap">
+      <span id="healthVideo" class="flex items-center gap-1">🔴 Video Gen</span>
+      <span id="healthImage" class="flex items-center gap-1">🔴 Image Gen</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <button onclick="logoutAdmin()" class="text-red-400 hover:text-red-300 text-sm">
+        <i class="fa fa-right-from-bracket"></i> Logout
+      </button>
+    </div>
+  </nav>
+
+  <!-- TABS NAVIGATION -->
+  <div class="bg-white shadow px-4 md:px-6 py-3 flex gap-2 overflow-x-auto sticky top-[64px] z-30">
+    <button class="tab-btn active px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap" data-tab="dashboard" onclick="switchMainTab('dashboard')">
+      <i class="fa fa-table-columns"></i> Dashboard
+    </button>
+    <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="generator" onclick="switchMainTab('generator')">
+      <i class="fa fa-wand-magic-sparkles"></i> Generator
+    </button>
+    <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="gallery" onclick="switchMainTab('gallery')">
+      <i class="fa fa-images"></i> Gallery
+    </button>
+    <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="settings" onclick="switchMainTab('settings')">
+      <i class="fa fa-gear"></i> Settings
+    </button>
+    <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="apidocs" onclick="switchMainTab('apidocs')">
+      <i class="fa fa-code"></i> API Docs
+    </button>
+  </div>
+
+  <!-- ===================== TAB: DASHBOARD ===================== -->
+  <div id="tabPanel-dashboard" class="main-tab-panel p-4 md:p-6 max-w-7xl mx-auto">
+
+    <!-- STATS PANEL -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="bg-white rounded-xl shadow p-4">
+        <p class="text-gray-500 text-xs md:text-sm">Video dari Dashboard</p>
+        <p id="statVideoDash" class="text-xl md:text-2xl font-bold text-indigo-600">0</p>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <p class="text-gray-500 text-xs md:text-sm">Video dari API</p>
+        <p id="statVideoApi" class="text-xl md:text-2xl font-bold text-indigo-600">0</p>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <p class="text-gray-500 text-xs md:text-sm">Image dari Dashboard</p>
+        <p id="statImageDash" class="text-xl md:text-2xl font-bold text-purple-600">0</p>
+      </div>
+      <div class="bg-white rounded-xl shadow p-4">
+        <p class="text-gray-500 text-xs md:text-sm">Image dari API</p>
+        <p id="statImageApi" class="text-xl md:text-2xl font-bold text-purple-600">0</p>
+      </div>
+    </div>
+
+    <!-- ACCOUNT TABLE -->
+    <div class="bg-white rounded-xl shadow p-4 mb-6">
+      <div class="flex justify-between items-center mb-4 flex-wrap gap-2">
+        <h2 class="text-lg font-bold">Daftar Akun SnapGen AI</h2>
+        <button onclick="openModal('addAccountModal')" class="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm">
+          <i class="fa fa-plus"></i> Tambah Akun
+        </button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+          <thead class="bg-gray-100 text-gray-600">
+            <tr>
+              <th class="p-2 text-left">ID</th>
+              <th class="p-2 text-left">Email</th>
+              <th class="p-2 text-left">IP Proxy</th>
+              <th class="p-2 text-left">Proxy</th>
+              <th class="p-2 text-left">Sesi</th>
+              <th class="p-2 text-left">Kredit</th>
+              <th class="p-2 text-left">Cookie</th>
+              <th class="p-2 text-left">Aksi</th>
+            </tr>
+          </thead>
+          <tbody id="accountTableBody"></tbody>
+        </table>
+        <p id="accountEmptyState" class="text-center text-gray-400 py-6 hidden">Belum ada akun. Klik "Tambah Akun" untuk memulai.</p>
+      </div>
+    </div>
+
+    <!-- SYSTEM LOG -->
+    <div class="bg-black text-green-400 font-mono text-xs rounded-xl p-4 h-48 overflow-y-auto" id="systemLog">
+      <p>[SYSTEM] Menunggu log aktivitas...</p>
+    </div>
+  </div>
+
+  <!-- ===================== TAB: GENERATOR ===================== -->
+  <div id="tabPanel-generator" class="main-tab-panel p-4 md:p-6 max-w-5xl mx-auto hidden">
+    <div class="flex gap-3 mb-6">
+      <button onclick="switchGenTab('video')" id="genTabVideoBtn" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium">
+        🎬 Video Generator
+      </button>
+      <button onclick="switchGenTab('image')" id="genTabImageBtn" class="px-4 py-2 rounded-lg bg-gray-300 text-sm font-medium">
+        🖼️ Image Generator
+      </button>
+    </div>
+
+    <!-- ---- VIDEO GENERATOR ---- -->
+    <div id="genPanelVideo" class="bg-white rounded-xl shadow p-6 space-y-4">
+      <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-film text-indigo-600"></i> AI Video Generator (Veo)</h2>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500">Provider</label>
+          <select id="v_provider" class="w-full border p-2 rounded-lg mt-1">
+            <option>Veo (Google AI)</option>
+            <option>Grok (xAI)</option>
+            <option>Vela AI</option>
+            <option>Bytedance (Seed)</option>
+            <option>Kling (Kuaishou)</option>
+            <option>Black Forest Labs (BFL)</option>
+            <option>MiniMax</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">Model</label>
+          <select id="v_model" class="w-full border p-2 rounded-lg mt-1">
+            <option>Grok Lower</option>
+            <option>Veo 2</option>
+            <option>Kling 1.5</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-medium text-gray-500">Prompt</label>
+        <textarea id="v_prompt" maxlength="5000" oninput="updateCharCounter('v_prompt','v_counter')" placeholder="Tulis deskripsi video yang ingin dibuat..." class="w-full border p-3 rounded-lg h-28 mt-1"></textarea>
+        <p class="text-xs text-gray-400 text-right"><span id="v_counter">0</span>/5000</p>
+      </div>
+
+      <div>
+        <label class="text-xs font-medium text-gray-500">Image Reference (opsional, untuk Image-to-Video)</label>
+        <div class="flex gap-2 mt-1">
+          <input type="text" id="v_image_ref" placeholder="URL gambar / hasil upload" class="flex-1 border p-2 rounded-lg">
+          <input type="file" id="v_image_upload" accept="image/*" class="hidden" onchange="uploadImageRef(this, 'v_image_ref', 'v_image_ref_local')">
+          <button type="button" onclick="document.getElementById('v_image_upload').click()" class="bg-gray-200 px-3 py-2 rounded-lg text-sm">
+            <i class="fa fa-upload"></i> Upload
+          </button>
+        </div>
+        <input type="hidden" id="v_image_ref_local">
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500">Orientation</label>
+          <select id="v_orientation" class="w-full border p-2 rounded-lg mt-1" onchange="updateVideoCostEstimate()">
+            <option value="16:9">Landscape (16:9)</option>
+            <option value="9:16">Portrait (9:16)</option>
+            <option value="1:1">Square (1:1)</option>
+            <option value="2:3">Vertical (2:3)</option>
+            <option value="3:2">Horizontal (3:2)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">Resolution</label>
+          <select id="v_resolution" class="w-full border p-2 rounded-lg mt-1" onchange="updateVideoCostEstimate()">
+            <option value="480p">Standard 480p (SD)</option>
+            <option value="720p">High 720p (HD)</option>
+            <option value="1080p">Full HD 1080p (FHD)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">Duration</label>
+          <select id="v_duration" class="w-full border p-2 rounded-lg mt-1" onchange="updateVideoCostEstimate()">
+            <option value="6">6 seconds</option>
+            <option value="10">10 seconds</option>
+            <option value="15">15 seconds</option>
+            <option value="30">30 seconds (Storyboards)</option>
+          </select>
+        </div>
+      </div>
+
+      <label class="flex items-center gap-2 text-sm">
+        <input type="checkbox" id="v_audio" class="w-4 h-4"> Audio On
+      </label>
+
+      <div class="bg-indigo-50 text-indigo-700 rounded-lg p-3 text-sm font-semibold" id="v_cost_estimate">
+        💰 Estimasi Biaya: 8 Credits
+      </div>
+
+      <button onclick="submitGenerateVideo()" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold w-full md:w-auto">
+        <i class="fa fa-wand-magic-sparkles"></i> Generate Video
+      </button>
+
+      <div id="v_progress_wrap" class="hidden">
+        <div class="w-full bg-gray-200 rounded-full h-5 overflow-hidden mt-3">
+          <div id="v_progress_bar" class="bg-indigo-600 h-5 text-xs text-white text-center leading-5 transition-all duration-500" style="width:0%">0%</div>
+        </div>
+        <p id="v_status_text" class="text-sm mt-2 text-gray-600">Queued...</p>
+      </div>
+
+      <div id="v_result" class="mt-4"></div>
+    </div>
+
+    <!-- ---- IMAGE GENERATOR ---- -->
+    <div id="genPanelImage" class="bg-white rounded-xl shadow p-6 space-y-4 hidden">
+      <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-image text-purple-600"></i> AI Image Generator (Imagen)</h2>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500">Provider</label>
+          <select id="i_provider" class="w-full border p-2 rounded-lg mt-1">
+            <option>Imagen (Google AI)</option>
+            <option>Grok (xAI)</option>
+            <option>GPT Image 2 (OpenAI)</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">Model</label>
+          <select id="i_model" class="w-full border p-2 rounded-lg mt-1">
+            <option>Nano Banana Pro (Free)</option>
+            <option>SDXL</option>
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label class="text-xs font-medium text-gray-500">Prompt</label>
+        <textarea id="i_prompt" maxlength="5000" oninput="updateCharCounter('i_prompt','i_counter')" placeholder="Tulis deskripsi gambar yang ingin dibuat..." class="w-full border p-3 rounded-lg h-28 mt-1"></textarea>
+        <p class="text-xs text-gray-400 text-right"><span id="i_counter">0</span>/5000</p>
+      </div>
+
+      <div>
+        <label class="text-xs font-medium text-gray-500">Image Reference (opsional)</label>
+        <div class="flex gap-2 mt-1">
+          <input type="text" id="i_image_ref" placeholder="URL gambar / hasil upload" class="flex-1 border p-2 rounded-lg">
+          <input type="file" id="i_image_upload" accept="image/*" class="hidden" onchange="uploadImageRef(this, 'i_image_ref', 'i_image_ref_local')">
+          <button type="button" onclick="document.getElementById('i_image_upload').click()" class="bg-gray-200 px-3 py-2 rounded-lg text-sm">
+            <i class="fa fa-upload"></i> Upload
+          </button>
+        </div>
+        <input type="hidden" id="i_image_ref_local">
+      </div>
+
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500">Aspect Ratio</label>
+          <select id="i_aspect" class="w-full border p-2 rounded-lg mt-1" onchange="updateImageCostEstimate()">
+            <option value="1:1">1:1</option>
+            <option value="16:9">16:9</option>
+            <option value="9:16">9:16</option>
+            <option value="3:4">3:4</option>
+            <option value="4:3">4:3</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">Resolution</label>
+          <select id="i_resolution" class="w-full border p-2 rounded-lg mt-1" onchange="updateImageCostEstimate()">
+            <option value="1K">1K</option>
+            <option value="2K">2K</option>
+            <option value="4K">4K</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="bg-purple-50 text-purple-700 rounded-lg p-3 text-sm font-semibold" id="i_cost_estimate">
+        💰 Estimasi Biaya: 2 Credits
+      </div>
+
+      <button onclick="submitGenerateImage()" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold w-full md:w-auto">
+        <i class="fa fa-image"></i> Generate Image
+      </button>
+
+      <div id="i_progress_wrap" class="hidden">
+        <div class="w-full bg-gray-200 rounded-full h-5 overflow-hidden mt-3">
+          <div id="i_progress_bar" class="bg-purple-600 h-5 text-xs text-white text-center leading-5 transition-all duration-500" style="width:0%">0%</div>
+        </div>
+        <p id="i_status_text" class="text-sm mt-2 text-gray-600">Queued...</p>
+      </div>
+
+      <div id="i_result" class="mt-4"></div>
+    </div>
+  </div>
+
+  <!-- ===================== TAB: GALLERY ===================== -->
+  <div id="tabPanel-gallery" class="main-tab-panel p-4 md:p-6 max-w-6xl mx-auto hidden">
+    <h2 class="text-lg font-bold mb-4">Riwayat Hasil Generate</h2>
+    <div id="galleryGrid" class="grid grid-cols-2 md:grid-cols-4 gap-4"></div>
+    <p id="galleryEmptyState" class="text-center text-gray-400 py-10 hidden">Belum ada hasil generate.</p>
+  </div>
+
+  <!-- ===================== TAB: SETTINGS ===================== -->
+  <div id="tabPanel-settings" class="main-tab-panel p-4 md:p-6 max-w-2xl mx-auto hidden">
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-lg font-bold mb-4"><i class="fa fa-shield-halved text-indigo-600"></i> Pengaturan Captcha Solver</h2>
+      <form id="settingsForm" class="space-y-4">
+        <div>
+          <label class="text-xs font-medium text-gray-500">Provider Captcha</label>
+          <select id="captchaProvider" class="w-full border p-2 rounded-lg mt-1">
+            <option value="2captcha">2Captcha</option>
+            <option value="capsolver">CapSolver</option>
+            <option value="anticaptcha">Anti-Captcha</option>
+            <option value="nextcaptcha">NextCaptcha</option>
+          </select>
+        </div>
+        <div>
+          <label class="text-xs font-medium text-gray-500">API Key</label>
+          <input type="text" id="captchaApiKey" class="w-full border p-2 rounded-lg mt-1" placeholder="Masukkan API Key Captcha Solver">
+        </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" id="captchaAutoSolve" class="w-4 h-4"> Aktifkan Auto-Solve saat Login & Generate
+        </label>
+
+        <hr class="my-4">
+        <h2 class="text-lg font-bold mb-2"><i class="fa fa-network-wired text-indigo-600"></i> Proxy Default (Fallback)</h2>
+        <div class="grid grid-cols-2 gap-3">
+          <input type="text" id="defProxyHost" placeholder="Host" class="border p-2 rounded-lg">
+          <input type="text" id="defProxyPort" placeholder="Port" class="border p-2 rounded-lg">
+          <input type="text" id="defProxyUser" placeholder="Username (opsional)" class="border p-2 rounded-lg">
+          <input type="password" id="defProxyPass" placeholder="Password (opsional)" class="border p-2 rounded-lg">
+        </div>
+        <select id="defProxyType" class="w-full border p-2 rounded-lg">
+          <option value="http">HTTP</option>
+          <option value="https">HTTPS</option>
+          <option value="socks5">SOCKS5</option>
+        </select>
+
+        <button type="submit" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold w-full">
+          <i class="fa fa-save"></i> Simpan Pengaturan
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- ===================== TAB: API DOCS ===================== -->
+  <div id="tabPanel-apidocs" class="main-tab-panel p-4 md:p-6 max-w-4xl mx-auto hidden space-y-6">
+
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2">🔑 Autentikasi</h2>
+      <p class="text-sm text-gray-600 mb-2">Gunakan header berikut pada setiap request ke <code>/api/v1/*</code>:</p>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">X-API-KEY: PUBLIC_API_KEY_ANDA</pre>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2">🎬 POST /api/v1/video/generate</h2>
+
+      <h3 class="font-semibold mt-3 text-sm text-gray-700">cURL</h3>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl -X POST BASE_URL/api/v1/video/generate \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: PUBLIC_API_KEY_ANDA" \
+  -d '{
+    "provider": "Veo (Google AI)",
+    "model": "Veo 2",
+    "prompt": "A futuristic city at sunset",
+    "image_reference": null,
+    "orientation": "16:9",
+    "resolution": "1080p",
+    "duration": 10,
+    "audio": true
+  }'</pre>
+
+      <h3 class="font-semibold mt-3 text-sm text-gray-700">JavaScript (Axios)</h3>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">const axios = require('axios');
+
+const res = await axios.post('BASE_URL/api/v1/video/generate', {
+  provider: "Veo (Google AI)",
+  model: "Veo 2",
+  prompt: "A futuristic city at sunset",
+  orientation: "16:9",
+  resolution: "1080p",
+  duration: 10,
+  audio: true
+}, { headers: { "X-API-KEY": "PUBLIC_API_KEY_ANDA" } });
+
+console.log(res.data);
+// { success: true, taskId: "TASK_12345", cost: 8 }</pre>
+
+      <h3 class="font-semibold mt-3 text-sm text-gray-700">Python</h3>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">import requests
+
+res = requests.post("BASE_URL/api/v1/video/generate",
+  headers={"X-API-KEY": "PUBLIC_API_KEY_ANDA"},
+  json={
+    "provider": "Veo (Google AI)",
+    "model": "Veo 2",
+    "prompt": "A futuristic city at sunset",
+    "orientation": "16:9",
+    "resolution": "1080p",
+    "duration": 10,
+    "audio": True
+  })
+print(res.json())</pre>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2">🖼️ POST /api/v1/image/generate</h2>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl -X POST BASE_URL/api/v1/image/generate \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: PUBLIC_API_KEY_ANDA" \
+  -d '{
+    "provider": "Imagen (Google AI)",
+    "model": "Nano Banana Pro (Free)",
+    "prompt": "A cute robot in cyberpunk style",
+    "aspect_ratio": "1:1",
+    "resolution": "2K"
+  }'</pre>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2">📊 GET /api/v1/task/status/:taskId</h2>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl BASE_URL/api/v1/task/status/TASK_12345 \
+  -H "X-API-KEY: PUBLIC_API_KEY_ANDA"</pre>
+      <p class="text-sm text-gray-600 mt-2">Response saat selesai:</p>
+      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">{
+  "success": true,
+  "status": "completed",
+  "type": "video",
+  "mediaUrl": "BASE_URL/downloads/video_123.mp4",
+  "previewUrl": "...",
+  "creditsLeft": 10
+}</pre>
+    </div>
+
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2">🔔 Webhook (Opsional)</h2>
+      <p class="text-sm text-gray-600">Tambahkan field <code>webhook_url</code> pada payload generate — sistem akan mengirim POST callback ke URL tersebut saat task selesai.</p>
+    </div>
+  </div>
+
+</div>
+
+<!-- ========================= MODAL: TAMBAH AKUN ========================= -->
+<div id="addAccountModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-xl p-6 w-full max-w-md max-h-[90vh] overflow-y-auto">
+    <h3 class="text-lg font-bold mb-4">Tambah Akun & Proxy</h3>
+    <form id="addAccountForm" class="space-y-3">
+      <input type="email" id="accEmail" placeholder="Email SnapGen" class="w-full border p-2 rounded-lg" required>
+      <input type="password" id="accPassword" placeholder="Password SnapGen" class="w-full border p-2 rounded-lg" required>
+      <p class="text-xs text-gray-400 pt-2">Pengaturan Proxy (opsional, kosongkan jika pakai proxy default)</p>
+      <div class="grid grid-cols-2 gap-2">
+        <input type="text" id="proxyHost" placeholder="Proxy Host" class="border p-2 rounded-lg">
+        <input type="text" id="proxyPort" placeholder="Proxy Port" class="border p-2 rounded-lg">
+        <input type="text" id="proxyUser" placeholder="Proxy Username" class="border p-2 rounded-lg">
+        <input type="password" id="proxyPass" placeholder="Proxy Password" class="border p-2 rounded-lg">
+      </div>
+      <select id="proxyType" class="w-full border p-2 rounded-lg">
+        <option value="http">HTTP</option>
+        <option value="https">HTTPS</option>
+        <option value="socks5">SOCKS5</option>
+      </select>
+      <div class="flex justify-end gap-2 pt-2">
+        <button type="button" onclick="closeModal('addAccountModal')" class="px-4 py-2 rounded-lg bg-gray-200">Batal</button>
+        <button type="submit" class="px-4 py-2 rounded-lg bg-indigo-600 text-white">Simpan</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- ========================= MODAL: OTP ========================= -->
+<div id="otpModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-xl p-6 w-full max-w-sm text-center">
+    <i class="fa-solid fa-shield-halved text-4xl text-indigo-600 mb-3"></i>
+    <h3 class="text-lg font-bold mb-2">Input OTP Diperlukan</h3>
+    <p class="text-sm text-gray-500 mb-4" id="otpAccountEmail">Akun: -</p>
+    <input type="text" id="otpInput" maxlength="6" placeholder="------" class="w-full text-center text-2xl tracking-[0.5em] border p-3 rounded-lg mb-4">
+    <button onclick="submitOtpCode()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-3 rounded-lg font-semibold">
+      <i class="fa fa-paper-plane"></i> Submit OTP
+    </button>
+  </div>
+</div>
+
+<!-- ========================= MODAL: VIEW COOKIE ========================= -->
+<div id="cookieModal" class="fixed inset-0 modal-overlay hidden items-center justify-center z-50 p-4">
+  <div class="bg-white rounded-xl p-6 w-full max-w-lg">
+    <h3 class="text-lg font-bold mb-3">Cookie / Session JSON</h3>
+    <textarea id="cookieContent" class="w-full h-64 border p-2 font-mono text-xs rounded-lg" readonly></textarea>
+    <div class="flex justify-end gap-2 mt-3">
+      <button onclick="copyCookieContent()" class="px-4 py-2 rounded-lg bg-indigo-600 text-white"><i class="fa fa-copy"></i> Copy</button>
+      <button onclick="closeModal('cookieModal')" class="px-4 py-2 rounded-lg bg-gray-200">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ========================= TOAST NOTIFICATION ========================= -->
+<div id="toastContainer" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
+
+<script>
+/* =====================================================================
+   SOCKET.IO CLIENT
+===================================================================== */
+const socket = io();
+let currentVideoTaskId = null;
+let currentImageTaskId = null;
+
+socket.on('otp-required', ({ accountId, email }) => {
+  document.getElementById('otpAccountEmail').textContent = `Akun: ${email}`;
+  document.getElementById('otpModal').dataset.accountId = accountId;
+  openModal('otpModal');
+  showToast(`OTP diperlukan untuk akun ${email}`, 'warning');
+});
+
+socket.on('system-log', ({ message, time }) => {
+  const logEl = document.getElementById('systemLog');
+  if (logEl) {
+    const line = document.createElement('p');
+    line.textContent = `[${new Date(time).toLocaleTimeString()}] ${message}`;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+});
+
+socket.on('health-status', ({ videoGen, imageGen }) => {
+  document.getElementById('healthVideo').innerHTML = videoGen ? '🟢 Video Gen' : '🔴 Video Gen';
+  document.getElementById('healthImage').innerHTML = imageGen ? '🟢 Image Gen' : '🔴 Image Gen';
+});
+
+socket.on('account-updated', () => fetchAccounts());
+socket.on('stats-updated', (stats) => updateStatsUI(stats));
+
+socket.on('generation-progress', ({ taskId, status, progress, mediaUrl, error }) => {
+  if (taskId === currentVideoTaskId) {
+    document.getElementById('v_progress_bar').style.width = progress + '%';
+    document.getElementById('v_progress_bar').textContent = progress + '%';
+    document.getElementById('v_status_text').textContent = `Status: ${status}`;
+    if (status === 'completed' && mediaUrl) {
+      document.getElementById('v_result').innerHTML = `
+        <video src="${mediaUrl}" controls class="w-full rounded-lg mt-2"></video>
+        <a href="${mediaUrl}" download class="inline-block mt-2 bg-green-600 text-white px-4 py-2 rounded-lg">
+          <i class="fa fa-download"></i> Download Video
+        </a>`;
+      showToast('Video berhasil digenerate!', 'success');
+    }
+    if (status === 'failed') {
+      document.getElementById('v_result').innerHTML = `<p class="text-red-600 text-sm">Gagal: ${error}</p>`;
+      showToast('Generate video gagal: ' + error, 'error');
+    }
+  }
+
+  if (taskId === currentImageTaskId) {
+    document.getElementById('i_progress_bar').style.width = progress + '%';
+    document.getElementById('i_progress_bar').textContent = progress + '%';
+    document.getElementById('i_status_text').textContent = `Status: ${status}`;
+    if (status === 'completed' && mediaUrl) {
+      document.getElementById('i_result').innerHTML = `
+        <img src="${mediaUrl}" class="w-full rounded-lg mt-2">
+        <a href="${mediaUrl}" download class="inline-block mt-2 bg-green-600 text-white px-4 py-2 rounded-lg">
+          <i class="fa fa-download"></i> Download Image
+        </a>`;
+      showToast('Gambar berhasil digenerate!', 'success');
+    }
+    if (status === 'failed') {
+      document.getElementById('i_result').innerHTML = `<p class="text-red-600 text-sm">Gagal: ${error}</p>`;
+      showToast('Generate image gagal: ' + error, 'error');
+    }
+  }
+});
+
+/* =====================================================================
+   TOAST NOTIFICATION
+===================================================================== */
+function showToast(message, type = 'info') {
+  const colors = { success: 'bg-green-600', error: 'bg-red-600', warning: 'bg-yellow-500', info: 'bg-indigo-600' };
+  const toast = document.createElement('div');
+  toast.className = `${colors[type] || colors.info} text-white px-4 py-3 rounded-lg shadow-lg text-sm max-w-xs animate-pulse`;
+  toast.textContent = message;
+  document.getElementById('toastContainer').appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
+/* =====================================================================
+   MODAL HELPERS
+===================================================================== */
+function openModal(id) {
+  const el = document.getElementById(id);
+  el.classList.remove('hidden');
+  el.classList.add('flex');
+}
+function closeModal(id) {
+  const el = document.getElementById(id);
+  el.classList.add('hidden');
+  el.classList.remove('flex');
+}
+
+/* =====================================================================
+   AUTH: LOGIN / LOGOUT / CHECK SESSION
+===================================================================== */
+async function checkSession() {
+  try {
+    const res = await fetch('/api/admin/check-session');
+    const data = await res.json();
+    if (data.loggedIn) {
+      document.getElementById('loginScreen').classList.add('hidden');
+      document.getElementById('mainApp').classList.remove('hidden');
+      initDashboard();
+    } else {
+      document.getElementById('loginScreen').classList.remove('hidden');
+      document.getElementById('loginScreen').classList.add('flex');
+      document.getElementById('mainApp').classList.add('hidden');
+    }
+  } catch (e) {
+    document.getElementById('loginScreen').classList.remove('hidden');
+    document.getElementById('loginScreen').classList.add('flex');
+  }
+}
+
+document.getElementById('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = document.getElementById('loginUsername').value;
+  const password = document.getElementById('loginPassword').value;
+  const res = await fetch('/api/admin/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password })
+  });
+  const data = await res.json();
+  if (data.success) {
+    checkSession();
+  } else {
+    document.getElementById('loginError').classList.remove('hidden');
+  }
+});
+
+async function logoutAdmin() {
+  await fetch('/api/admin/logout', { method: 'POST' });
+  window.location.reload();
+}
+
+/* =====================================================================
+   MAIN TAB NAVIGATION
+===================================================================== */
+function switchMainTab(tab) {
+  document.querySelectorAll('.main-tab-panel').forEach(p => p.classList.add('hidden'));
+  document.getElementById(`tabPanel-${tab}`).classList.remove('hidden');
+
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    if (btn.dataset.tab === tab) {
+      btn.classList.add('active');
+      btn.classList.remove('bg-gray-200');
+    } else {
+      btn.classList.remove('active');
+      btn.classList.add('bg-gray-200');
+    }
+  });
+
+  if (tab === 'gallery') loadGallery();
+  if (tab === 'settings') loadSettings();
+}
+
+function switchGenTab(tab) {
+  document.getElementById('genPanelVideo').classList.toggle('hidden', tab !== 'video');
+  document.getElementById('genPanelImage').classList.toggle('hidden', tab !== 'image');
+  document.getElementById('genTabVideoBtn').className = tab === 'video' ? 'px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-medium' : 'px-4 py-2 rounded-lg bg-gray-300 text-sm font-medium';
+  document.getElementById('genTabImageBtn').className = tab === 'image' ? 'px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-medium' : 'px-4 py-2 rounded-lg bg-gray-300 text-sm font-medium';
+}
+
+/* =====================================================================
+   DASHBOARD: ACCOUNTS
+===================================================================== */
+function statusBadge(status) {
+  const map = {
+    online: '🟢 Online', offline: '🔴 Offline', unknown: '⚪ Unknown',
+    active: '🟢 Active', need_otp: '🟡 Need OTP', expired: '🔴 Expired'
+  };
+  return map[status] || status;
+}
+
+async function fetchAccounts() {
+  const res = await fetch('/api/admin/accounts');
+  const data = await res.json();
+  renderAccounts(data.data || []);
+}
+
+function renderAccounts(accounts) {
+  const tbody = document.getElementById('accountTableBody');
+  const emptyState = document.getElementById('accountEmptyState');
+  tbody.innerHTML = '';
+
+  if (accounts.length === 0) {
+    emptyState.classList.remove('hidden');
+    return;
+  }
+  emptyState.classList.add('hidden');
+
+  accounts.forEach(acc => {
+    const tr = document.createElement('tr');
+    tr.className = 'border-b hover:bg-gray-50';
+    tr.innerHTML = `
+      <td class="p-2 text-xs">${acc.id}</td>
+      <td class="p-2">${acc.email}</td>
+      <td class="p-2">${acc.proxy ? acc.proxy.host : '-'}</td>
+      <td class="p-2">${statusBadge(acc.statusProxy)}</td>
+      <td class="p-2">${statusBadge(acc.statusCookie)}</td>
+      <td class="p-2">${acc.isUnlimited ? 'Unlimited' : (acc.creditsLeft || 0) + ' Credits'}</td>
+      <td class="p-2"><button onclick="viewCookie('${acc.id}')" class="text-indigo-600 hover:underline text-xs">View</button></td>
+      <td class="p-2 space-x-2 whitespace-nowrap">
+        <button onclick="triggerRelogin('${acc.id}')" class="text-yellow-600 hover:underline text-xs">Re-Login</button>
+        <button onclick="checkCredits('${acc.id}')" class="text-green-600 hover:underline text-xs">Check Credits</button>
+        <button onclick="deleteAccount('${acc.id}')" class="text-red-600 hover:underline text-xs">Delete</button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+document.getElementById('addAccountForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    email: document.getElementById('accEmail').value,
+    password: document.getElementById('accPassword').value,
+    proxy: {
+      host: document.getElementById('proxyHost').value,
+      port: document.getElementById('proxyPort').value,
+      username: document.getElementById('proxyUser').value,
+      password: document.getElementById('proxyPass').value,
+      type: document.getElementById('proxyType').value
+    }
+  };
+  await fetch('/api/admin/accounts', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  closeModal('addAccountModal');
+  e.target.reset();
+  fetchAccounts();
+  showToast('Akun ditambahkan, proses auto-login berjalan di background...', 'info');
+});
+
+async function triggerRelogin(id) {
+  await fetch(`/api/admin/accounts/${id}/relogin`, { method: 'POST' });
+  showToast('Re-login dijalankan di background', 'info');
+}
+async function checkCredits(id) {
+  await fetch(`/api/admin/accounts/${id}/check-credits`, { method: 'POST' });
+  showToast('Mengecek kredit di background', 'info');
+}
+async function deleteAccount(id) {
+  if (!confirm('Yakin hapus akun ini?')) return;
+  await fetch(`/api/admin/accounts/${id}`, { method: 'DELETE' });
+  fetchAccounts();
+  showToast('Akun dihapus', 'success');
+}
+async function viewCookie(id) {
+  const res = await fetch(`/api/admin/accounts/${id}/cookie`);
+  const data = await res.json();
+  document.getElementById('cookieContent').value = JSON.stringify(data.data || {}, null, 2);
+  openModal('cookieModal');
+}
+function copyCookieContent() {
+  const el = document.getElementById('cookieContent');
+  el.select();
+  document.execCommand('copy');
+  showToast('Cookie disalin ke clipboard', 'success');
+}
+
+function submitOtpCode() {
+  const accountId = document.getElementById('otpModal').dataset.accountId;
+  const otp = document.getElementById('otpInput').value;
+  if (otp.length !== 6) { showToast('OTP harus 6 digit', 'error'); return; }
+  socket.emit('submit-otp', { accountId, otp });
+  closeModal('otpModal');
+  document.getElementById('otpInput').value = '';
+  showToast('OTP terkirim, menunggu validasi...', 'info');
+}
+
+/* =====================================================================
+   STATS
+===================================================================== */
+async function fetchStats() {
+  const res = await fetch('/api/admin/stats');
+  const data = await res.json();
+  updateStatsUI(data.data || {});
+}
+function updateStatsUI(stats) {
+  document.getElementById('statVideoDash').textContent = stats.videoFromDashboard || 0;
+  document.getElementById('statVideoApi').textContent = stats.videoFromApi || 0;
+  document.getElementById('statImageDash').textContent = stats.imageFromDashboard || 0;
+  document.getElementById('statImageApi').textContent = stats.imageFromApi || 0;
+}
+
+/* =====================================================================
+   GENERATOR: VIDEO
+===================================================================== */
+function updateCharCounter(inputId, counterId) {
+  document.getElementById(counterId).textContent = document.getElementById(inputId).value.length;
+}
+
+function updateVideoCostEstimate() {
+  let base = 8;
+  if (document.getElementById('v_resolution').value === '1080p') base += 4;
+  if (parseInt(document.getElementById('v_duration').value) >= 15) base += 4;
+  document.getElementById('v_cost_estimate').textContent = `💰 Estimasi Biaya: ${base} Credits`;
+}
+function updateImageCostEstimate() {
+  let base = 2;
+  if (document.getElementById('i_resolution').value === '4K') base += 2;
+  document.getElementById('i_cost_estimate').textContent = `💰 Estimasi Biaya: ${base} Credits`;
+}
+
+async function uploadImageRef(input, urlFieldId, localFieldId) {
+  if (!input.files || !input.files[0]) return;
+  const formData = new FormData();
+  formData.append('file', input.files[0]);
+  showToast('Mengupload gambar...', 'info');
+  const res = await fetch('/api/admin/upload', { method: 'POST', body: formData });
+  const data = await res.json();
+  if (data.success) {
+    document.getElementById(urlFieldId).value = data.url;
+    document.getElementById(localFieldId).value = data.localPath;
+    showToast('Gambar berhasil diupload', 'success');
+  } else {
+    showToast('Upload gagal: ' + data.message, 'error');
+  }
+}
+
+async function submitGenerateVideo() {
+  const prompt = document.getElementById('v_prompt').value.trim();
+  if (!prompt) { showToast('Prompt tidak boleh kosong', 'error'); return; }
+
+  const payload = {
+    provider: document.getElementById('v_provider').value,
+    model: document.getElementById('v_model').value,
+    prompt,
+    image_reference: document.getElementById('v_image_ref').value || null,
+    image_reference_local: document.getElementById('v_image_ref_local').value || null,
+    orientation: document.getElementById('v_orientation').value,
+    resolution: document.getElementById('v_resolution').value,
+    duration: parseInt(document.getElementById('v_duration').value),
+    audio: document.getElementById('v_audio').checked
+  };
+
+  document.getElementById('v_progress_wrap').classList.remove('hidden');
+  document.getElementById('v_result').innerHTML = '';
+  document.getElementById('v_progress_bar').style.width = '0%';
+  document.getElementById('v_progress_bar').textContent = '0%';
+
+  const res = await fetch('/api/admin/generate/video', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!data.success) { showToast('Gagal memulai generate: ' + data.message, 'error'); return; }
+
+  currentVideoTaskId = data.taskId;
+  document.getElementById('v_status_text').textContent = `Task: ${data.taskId} | Estimasi: ${data.cost} Credits`;
+  showToast('Video sedang diproses di antrean...', 'info');
+}
+
+async function submitGenerateImage() {
+  const prompt = document.getElementById('i_prompt').value.trim();
+  if (!prompt) { showToast('Prompt tidak boleh kosong', 'error'); return; }
+
+  const payload = {
+    provider: document.getElementById('i_provider').value,
+    model: document.getElementById('i_model').value,
+    prompt,
+    image_reference: document.getElementById('i_image_ref').value || null,
+    image_reference_local: document.getElementById('i_image_ref_local').value || null,
+    aspect_ratio: document.getElementById('i_aspect').value,
+    resolution: document.getElementById('i_resolution').value
+  };
+
+  document.getElementById('i_progress_wrap').classList.remove('hidden');
+  document.getElementById('i_result').innerHTML = '';
+  document.getElementById('i_progress_bar').style.width = '0%';
+  document.getElementById('i_progress_bar').textContent = '0%';
+
+  const res = await fetch('/api/admin/generate/image', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!data.success) { showToast('Gagal memulai generate: ' + data.message, 'error'); return; }
+
+  currentImageTaskId = data.taskId;
+  document.getElementById('i_status_text').textContent = `Task: ${data.taskId} | Estimasi: ${data.cost} Credits`;
+  showToast('Gambar sedang diproses di antrean...', 'info');
+}
+
+/* =====================================================================
+   GALLERY
+===================================================================== */
+async function loadGallery() {
+  const res = await fetch('/api/admin/gallery');
+  const data = await res.json();
+  const grid = document.getElementById('galleryGrid');
+  const emptyState = document.getElementById('galleryEmptyState');
+  grid.innerHTML = '';
+
+  const items = data.data || [];
+  if (items.length === 0) { emptyState.classList.remove('hidden'); return; }
+  emptyState.classList.add('hidden');
+
+  items.forEach(item => {
+    const isVideo = item.type === 'video';
+    const card = document.createElement('div');
+    card.className = 'bg-white rounded-xl shadow p-2';
+    card.innerHTML = `
+      ${isVideo
+        ? `<video src="${item.mediaUrl}" class="w-full rounded-lg h-40 object-cover" controls></video>`
+        : `<img src="${item.mediaUrl}" class="w-full rounded-lg h-40 object-cover">`}
+      <p class="text-xs text-gray-500 mt-2 truncate">${item.taskId}</p>
+      <p class="text-xs text-gray-400">${item.source} • ${item.cost} credits</p>
+      <a href="${item.mediaUrl}" download class="block text-center mt-2 bg-indigo-600 text-white text-xs py-2 rounded-lg">
+        <i class="fa fa-download"></i> Download
+      </a>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+/* =====================================================================
+   SETTINGS
+===================================================================== */
+async function loadSettings() {
+  const res = await fetch('/api/admin/settings');
+  const { data } = await res.json();
+  document.getElementById('captchaProvider').value = data.captchaProvider || '2captcha';
+  document.getElementById('captchaApiKey').value = data.captchaApiKey || '';
+  document.getElementById('captchaAutoSolve').checked = !!data.captchaAutoSolve;
+
+  if (data.defaultProxy) {
+    document.getElementById('defProxyHost').value = data.defaultProxy.host || '';
+    document.getElementById('defProxyPort').value = data.defaultProxy.port || '';
+    document.getElementById('defProxyUser').value = data.defaultProxy.username || '';
+    document.getElementById('defProxyPass').value = data.defaultProxy.password || '';
+    document.getElementById('defProxyType').value = data.defaultProxy.type || 'http';
+  }
+}
+
+document.getElementById('settingsForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const payload = {
+    captchaProvider: document.getElementById('captchaProvider').value,
+    captchaApiKey: document.getElementById('captchaApiKey').value,
+    captchaAutoSolve: document.getElementById('captchaAutoSolve').checked,
+    defaultProxy: {
+      host: document.getElementById('defProxyHost').value,
+      port: document.getElementById('defProxyPort').value,
+      username: document.getElementById('defProxyUser').value,
+      password: document.getElementById('defProxyPass').value,
+      type: document.getElementById('defProxyType').value
+    }
+  };
+  await fetch('/api/admin/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  showToast('Pengaturan berhasil disimpan!', 'success');
+});
+
+/* =====================================================================
+   INIT
+===================================================================== */
+function initDashboard() {
+  fetchAccounts();
+  fetchStats();
+  setInterval(fetchAccounts, 15000);
+  setInterval(fetchStats, 15000);
+}
+
+checkSession();
+</script>
+
+</body>
+</html>
