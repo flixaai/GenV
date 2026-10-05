@@ -339,12 +339,18 @@ async function launchBrowserForAccount(account) {
     activeBrowsers.delete(account.id);
   }
 
+  // OPTIMASI RAM SUPER EKSTREM UNTUK RAILWAY (Mencegah OOM Crash)
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
     '--disable-dev-shm-usage',
     '--disable-gpu',
-    '--window-size=1366,768'
+    '--window-size=1366,768',
+    '--disable-software-rasterizer',
+    '--disable-accelerated-2d-canvas',
+    '--disable-background-networking',
+    '--disable-extensions',
+    '--js-flags="--max-old-space-size=256"' // Batasi RAM V8 Engine agar tidak bocor
   ];
 
   const proxyUrl = buildProxyUrl(account.proxy);
@@ -368,6 +374,18 @@ async function newPageWithProxyAuth(browser, account) {
     await page.authenticate({ username: account.proxy.username, password: account.proxy.password });
   }
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
+  
+  // BLOKIR RESOURCE BERAT (Mencegah Railway Crash saat Generate Animasi)
+  await page.setRequestInterception(true);
+  page.on('request', (req) => {
+    const type = req.resourceType();
+    // Blokir Video/Media, Font, dan Script tracking yang memakan banyak RAM
+    if (['media', 'font'].includes(type) || req.url().includes('analytics') || req.url().includes('tracking')) {
+      req.abort();
+    } else {
+      req.continue();
+    }
+  });
   return page;
 }
 
