@@ -430,21 +430,30 @@ async function autoLogin(account) {
     throw new Error(`Gagal membuka halaman login: ${e.message}`);
   });
 
-  await sleep(2000);
+  await sleep(5000);
   await captureDebugSnapshot(page, account, 'step1-page-loaded');
 
-  const EMAIL_SELECTOR = 'input[type="email"], input[name="email"], input[id*="email" i]';
+  const EMAIL_SELECTOR = 'input[type="email"], input[name="email"], input[id*="email" i], input[placeholder*="email" i]';
   const PASSWORD_SELECTOR = 'input[type="password"], input[name="password"], input[id*="password" i]';
   const OTP_SELECTOR = 'input[name="otp"], input[autocomplete="one-time-code"], input[placeholder*="code" i]';
 
   try {
-    await page.waitForSelector(EMAIL_SELECTOR, { timeout: 30000, visible: true });
+    await page.waitForSelector(EMAIL_SELECTOR, { timeout: 45000, visible: true });
   } catch (err) {
+    const allInputsInfo = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('input')).map(el => ({
+        type: el.type, name: el.name, id: el.id, placeholder: el.placeholder, className: el.className
+      }));
+    }).catch(() => []);
+
+    const dumpPath = path.join(DEBUG_DIR, `${account.id}_input-dump.json`);
+    await fs.writeJson(dumpPath, allInputsInfo, { spaces: 2 }).catch(() => {});
+
     await captureDebugSnapshot(page, account, 'selector-not-found');
     const currentUrl = page.url();
     const pageTitle = await page.title().catch(() => 'unknown');
     await page.close().catch(() => {});
-    throw new Error(`Form email tidak ditemukan. URL: ${currentUrl} | Title: "${pageTitle}" | Cek: /debug/${account.id}_selector-not-found.png`);
+    throw new Error(`Form email tidak ditemukan. URL: ${currentUrl} | Title: "${pageTitle}" | Total input ditemukan: ${allInputsInfo.length} | Cek: /debug/${account.id}_input-dump.json`);
   }
 
   await page.click(EMAIL_SELECTOR);
