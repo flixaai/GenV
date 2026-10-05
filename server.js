@@ -624,81 +624,32 @@ async function generateVideoOnPage(account, params, taskId) {
   await restoreSessionToPage(page, account);
   await page.goto(VIDEO_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
+  // Disengaja stuck di 5% untuk keperluan memancing keluar JSON Debug
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  // TODO-SELECTOR: sesuaikan dengan struktur real DOM snapgen.ai/app/video-gen/veo
-  const SEL = {
-    providerDropdown: '[data-testid="provider-select"]',
-    modelDropdown: '[data-testid="model-select"]',
-    promptTextarea: 'textarea[name="prompt"]',
-    orientationSelect: '[data-testid="orientation-select"]',
-    resolutionSelect: '[data-testid="resolution-select"]',
-    durationSelect: '[data-testid="duration-select"]',
-    audioToggle: '[data-testid="audio-toggle"]',
-    imageUploadInput: 'input[type="file"]',
-    generateButton: 'button[data-testid="generate-video-btn"]',
-    progressBar: '[data-testid="progress-bar"]',
-    resultVideo: 'video[data-testid="result-video"] source'
-  };
+  emitLog(`[${account.email}] Mengekstrak data web SnapGen...`);
+  await sleep(10000); // Tunggu elemen loading hilang
 
-  await page.waitForSelector(SEL.promptTextarea, { timeout: 30000 });
-  await selectDropdownByLabel(page, SEL.providerDropdown, params.provider);
-  await selectDropdownByLabel(page, SEL.modelDropdown, params.model);
+  const dumpData = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
+      tag: el.tagName,
+      type: el.type || '',
+      name: el.name || '',
+      id: el.id || '',
+      className: el.className || '',
+      placeholder: el.placeholder || '',
+      text: el.innerText ? el.innerText.substring(0, 100) : '',
+      ariaLabel: el.getAttribute('aria-label') || ''
+    }));
+  });
 
-  await page.click(SEL.promptTextarea);
-  await page.type(SEL.promptTextarea, params.prompt, { delay: 8 });
-
-  if (params.imageReference && params.imageReference.localPath) {
-    const uploadEl = await page.$(SEL.imageUploadInput);
-    if (uploadEl) await uploadEl.uploadFile(params.imageReference.localPath);
-  }
-
-  await selectDropdownByLabel(page, SEL.orientationSelect, params.orientation);
-  await selectDropdownByLabel(page, SEL.resolutionSelect, params.resolution);
-  await selectDropdownByLabel(page, SEL.durationSelect, String(params.duration));
-
-  const audioState = await page.$eval(SEL.audioToggle, el => el.getAttribute('aria-checked')).catch(() => null);
-  if (audioState !== null && String(!!params.audio) !== audioState) {
-    await page.click(SEL.audioToggle).catch(() => {});
-  }
-
-  // Captcha check sebelum submit generate (beberapa provider pakai turnstile saat generate)
-  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
-  if (autoSolve && capKey) {
-    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
-  }
-
-  emitProgress(taskId, { status: 'processing', progress: 15 });
-  await page.click(SEL.generateButton);
-
-  let progress = 15, completed = false, resultUrl = null;
-  for (let i = 0; i < 120; i++) {
-    await sleep(5000);
-
-    const progressText = await page.$eval(SEL.progressBar, el => el.textContent).catch(() => null);
-    if (progressText) {
-      const match = progressText.match(/(\d+)%/);
-      if (match) progress = parseInt(match[1]);
-    }
-
-    const videoSrc = await page.$eval(SEL.resultVideo, el => el.src).catch(() => null);
-    if (videoSrc) { resultUrl = videoSrc; completed = true; progress = 100; }
-
-    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
-    if (completed) break;
-  }
-
-  if (!completed || !resultUrl) {
-    await page.close().catch(() => {});
-    throw new Error('Generate video timeout atau gagal mendapatkan hasil');
-  }
-
-  const fileName = `video_${taskId}.mp4`;
-  const localPath = path.join(DOWNLOADS_DIR, fileName);
-  await downloadRemoteFile(page, resultUrl, localPath);
+  const dumpPath = path.join(DEBUG_DIR, `${account.id}_videogen-dump.json`);
+  await fs.writeJson(dumpPath, dumpData, { spaces: 2 }).catch(() => {});
+  
+  emitLog(`[DEBUG] Dump Video Gen: /debug/${account.id}_videogen-dump.json`);
+  
   await page.close().catch(() => {});
-
-  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
+  throw new Error(`MODE DEBUG AKTIF: Sistem sengaja dihentikan. Buka link /debug/${account.id}_videogen-dump.json di log terminal Anda.`);
 }
 
 /* ===================================================================
@@ -713,73 +664,32 @@ async function generateImageOnPage(account, params, taskId) {
   await restoreSessionToPage(page, account);
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
 
+  // Disengaja stuck di 5% untuk keperluan memancing keluar JSON Debug
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  // TODO-SELECTOR: sesuaikan dengan struktur real DOM snapgen.ai/app/imagen
-  const SEL = {
-    providerDropdown: '[data-testid="provider-select"]',
-    modelDropdown: '[data-testid="model-select"]',
-    promptTextarea: 'textarea[name="prompt"]',
-    aspectRatioSelect: '[data-testid="aspect-ratio-select"]',
-    resolutionSelect: '[data-testid="resolution-select"]',
-    imageUploadInput: 'input[type="file"]',
-    generateButton: 'button[data-testid="generate-image-btn"]',
-    progressBar: '[data-testid="progress-bar"]',
-    resultImage: 'img[data-testid="result-image"]'
-  };
+  emitLog(`[${account.email}] Mengekstrak data web SnapGen (Image)...`);
+  await sleep(10000); // Tunggu elemen loading hilang
 
-  await page.waitForSelector(SEL.promptTextarea, { timeout: 30000 });
-  await selectDropdownByLabel(page, SEL.providerDropdown, params.provider);
-  await selectDropdownByLabel(page, SEL.modelDropdown, params.model);
+  const dumpData = await page.evaluate(() => {
+    return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
+      tag: el.tagName,
+      type: el.type || '',
+      name: el.name || '',
+      id: el.id || '',
+      className: el.className || '',
+      placeholder: el.placeholder || '',
+      text: el.innerText ? el.innerText.substring(0, 100) : '',
+      ariaLabel: el.getAttribute('aria-label') || ''
+    }));
+  });
 
-  await page.click(SEL.promptTextarea);
-  await page.type(SEL.promptTextarea, params.prompt, { delay: 8 });
-
-  if (params.imageReference && params.imageReference.localPath) {
-    const uploadEl = await page.$(SEL.imageUploadInput);
-    if (uploadEl) await uploadEl.uploadFile(params.imageReference.localPath);
-  }
-
-  await selectDropdownByLabel(page, SEL.aspectRatioSelect, params.aspect_ratio);
-  await selectDropdownByLabel(page, SEL.resolutionSelect, params.resolution);
-
-  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
-  if (autoSolve && capKey) {
-    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
-  }
-
-  emitProgress(taskId, { status: 'processing', progress: 20 });
-  await page.click(SEL.generateButton);
-
-  let progress = 20, completed = false, resultUrl = null;
-  for (let i = 0; i < 60; i++) {
-    await sleep(3000);
-
-    const progressText = await page.$eval(SEL.progressBar, el => el.textContent).catch(() => null);
-    if (progressText) {
-      const match = progressText.match(/(\d+)%/);
-      if (match) progress = parseInt(match[1]);
-    }
-
-    const imgSrc = await page.$eval(SEL.resultImage, el => el.src).catch(() => null);
-    if (imgSrc) { resultUrl = imgSrc; completed = true; progress = 100; }
-
-    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
-    if (completed) break;
-  }
-
-  if (!completed || !resultUrl) {
-    await page.close().catch(() => {});
-    throw new Error('Generate image timeout atau gagal mendapatkan hasil');
-  }
-
-  const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
-  const fileName = `image_${taskId}.${ext}`;
-  const localPath = path.join(DOWNLOADS_DIR, fileName);
-  await downloadRemoteFile(page, resultUrl, localPath);
+  const dumpPath = path.join(DEBUG_DIR, `${account.id}_imagegen-dump.json`);
+  await fs.writeJson(dumpPath, dumpData, { spaces: 2 }).catch(() => {});
+  
+  emitLog(`[DEBUG] Dump Image Gen: /debug/${account.id}_imagegen-dump.json`);
+  
   await page.close().catch(() => {});
-
-  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
+  throw new Error(`MODE DEBUG AKTIF: Sistem sengaja dihentikan. Buka link /debug/${account.id}_imagegen-dump.json di log terminal Anda.`);
 }
 
 /* ===================================================================
