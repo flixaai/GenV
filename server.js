@@ -384,7 +384,7 @@ async function checkProxyAlive(page) {
 /* ===================================================================
    LOGIN FLOW / AUTO-LOGIN / RESTORE SESSION
 =================================================================== */
-const LOGIN_URL = 'https://snapgen.ai/login'; // TODO-SELECTOR: sesuaikan jika URL login berbeda
+const LOGIN_URL = 'https://snapgen.ai/auth/login'; // URL terverifikasi dari screenshot user
 
 async function getCaptchaSettings() {
   const settings = await dbRead('settings', {});
@@ -393,6 +393,22 @@ async function getCaptchaSettings() {
     apiKey: settings.captchaApiKey || '',
     autoSolve: settings.captchaAutoSolve !== false
   };
+}
+
+const DEBUG_DIR = path.join(__dirname, 'debug');
+fs.ensureDirSync(DEBUG_DIR);
+
+async function captureDebugSnapshot(page, account, label) {
+  try {
+    const screenshotPath = path.join(DEBUG_DIR, `${account.id}_${label}.png`);
+    const htmlPath = path.join(DEBUG_DIR, `${account.id}_${label}.html`);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
+    const html = await page.content().catch(() => '');
+    await fs.writeFile(htmlPath, html).catch(() => {});
+    emitLog(`[${account.email}] 📸 Snapshot: /debug/${account.id}_${label}.png`);
+  } catch (e) {
+    logger.error('Gagal capture debug snapshot:', e.message);
+  }
 }
 
 async function autoLogin(account) {
@@ -409,17 +425,34 @@ async function autoLogin(account) {
     throw new Error('Proxy tidak merespon / mati');
   }
 
-  await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 }).catch(async (e) => {
+    await captureDebugSnapshot(page, account, 'goto-failed');
+    throw new Error(`Gagal membuka halaman login: ${e.message}`);
+  });
 
-  // TODO-SELECTOR: sesuaikan dengan struktur form login real snapgen.ai
-  const EMAIL_SELECTOR = 'input[name="email"], input[type="email"]';
-  const PASSWORD_SELECTOR = 'input[name="password"], input[type="password"]';
-  const SUBMIT_SELECTOR = 'button[type="submit"]';
-  const OTP_SELECTOR = 'input[name="otp"], input[autocomplete="one-time-code"]';
+  await sleep(2000);
+  await captureDebugSnapshot(page, account, 'step1-page-loaded');
 
-  await page.waitForSelector(EMAIL_SELECTOR, { timeout: 30000 });
-  await page.type(EMAIL_SELECTOR, account.email, { delay: 50 });
-  await page.type(PASSWORD_SELECTOR, account.password, { delay: 50 });
+  const EMAIL_SELECTOR = 'input[type="email"], input[name="email"], input[id*="email" i]';
+  const PASSWORD_SELECTOR = 'input[type="password"], input[name="password"], input[id*="password" i]';
+  const OTP_SELECTOR = 'input[name="otp"], input[autocomplete="one-time-code"], input[placeholder*="code" i]';
+
+  try {
+    await page.waitForSelector(EMAIL_SELECTOR, { timeout: 30000, visible: true });
+  } catch (err) {
+    await captureDebugSnapshot(page, account, 'selector-not-found');
+    const currentUrl = page.url();
+    const pageTitle = await page.title().catch(() => 'unknown');
+    await page.close().catch(() => {});
+    throw new Error(`Form email tidak ditemukan. URL: ${currentUrl} | Title: "${pageTitle}" | Cek: /debug/${account.id}_selector-not-found.png`);
+  }
+
+  await page.click(EMAIL_SELECTOR);
+  await page.type(EMAIL_SELECTOR, account.email, { delay: 60 });
+  await page.click(PASSWORD_SELECTOR);
+  await page.type(PASSWORD_SELECTOR, account.password, { delay: 60 });
+
+  await captureDebugSnapshot(page, account, 'step2-form-filled');
 
   const { provider, apiKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && apiKey) {
@@ -431,10 +464,17 @@ async function autoLogin(account) {
     }
   }
 
-  await Promise.all([
-    page.click(SUBMIT_SELECTOR).catch(() => {}),
-    page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
-  ]);
+  const clicked = await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    const target = buttons.find(b => /continue|sign in|log ?in|masuk/i.test(b.textContent));
+    if (target) { target.click(); return true; }
+    return false;
+  });
+  if (!clicked) await page.click('button[type="submit"]').catch(() => {});
+
+  await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
+  await sleep(1500);
+  await captureDebugSnapshot(page, account, 'step3-after-submit');
 
   const otpField = await page.$(OTP_SELECTOR);
   if (otpField) {
@@ -445,18 +485,29 @@ async function autoLogin(account) {
     const otp = await requestOtpFromAdmin(account.id, account.email);
     await page.type(OTP_SELECTOR, otp, { delay: 80 });
 
-    await Promise.all([
-      page.click(SUBMIT_SELECTOR).catch(() => {}),
-      page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {})
-    ]);
+    const otpClicked = await page.evaluate(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      const target = buttons.find(b => /continue|verify|submit|confirm/i.test(b.textContent));
+      if (target) { target.click(); return true; }
+      return false;
+    });
+    if (!otpClicked) await page.click('button[type="submit"]').catch(() => {});
+
+    await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
   }
 
   const currentUrl = page.url();
-  if (currentUrl.includes('/login')) {
+  if (currentUrl.includes('/auth/') || currentUrl.includes('/login')) {
+    await captureDebugSnapshot(page, account, 'login-failed-still-on-auth-page');
+    const errorText = await page.evaluate(() => {
+      const el = document.querySelector('[role="alert"], .error, .text-red-500, .text-danger');
+      return el ? el.textContent.trim() : null;
+    }).catch(() => null);
+
     await AccountManager.update(account.id, { statusCookie: 'expired' });
     emitAccountUpdate(await AccountManager.getById(account.id));
     await page.close().catch(() => {});
-    throw new Error('Login gagal — kemungkinan password salah atau akun terblokir.');
+    throw new Error(`Login gagal di ${currentUrl}. ${errorText ? 'Pesan: ' + errorText : ''} Cek: /debug/${account.id}_login-failed-still-on-auth-page.png`);
   }
 
   const cookies = await page.cookies();
@@ -469,13 +520,11 @@ async function autoLogin(account) {
     return data;
   });
 
-  // TODO-SELECTOR: sesuaikan key localStorage tempat token JWT disimpan
   const bearerToken = localStorageData['access_token'] || localStorageData['token'] || null;
-
   const sessionData = { cookies, localStorage: localStorageData, bearerToken, savedAt: new Date().toISOString() };
   await AccountManager.saveSession(account.id, sessionData);
 
-  emitLog(`[${account.email}] Login berhasil, sesi tersimpan.`);
+  emitLog(`[${account.email}] ✅ Login berhasil, sesi tersimpan.`);
   emitAccountUpdate(await AccountManager.getById(account.id));
 
   await page.close().catch(() => {});
@@ -890,6 +939,7 @@ app.use(session({
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/downloads', express.static(DOWNLOADS_DIR));
 app.use('/uploads', express.static(UPLOADS_DIR));
+app.use('/debug', express.static(DEBUG_DIR));
 
 // Multer untuk upload image reference
 const upload = multer({
