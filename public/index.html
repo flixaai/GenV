@@ -540,7 +540,13 @@ socket.on('system-log', ({ message, time }) => {
   const logEl = document.getElementById('systemLog');
   if (logEl) {
     const line = document.createElement('p');
-    line.textContent = `[${new Date(time).toLocaleTimeString()}] ${message}`;
+    const timeStr = `[${new Date(time).toLocaleTimeString()}]`;
+    let htmlMsg = message.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    htmlMsg = htmlMsg.replace(/(https?:\/\/[^\s]+|\/debug\/[^\s]+)/g, function(url) {
+      const link = url.startsWith('/debug/') ? window.location.origin + url : url;
+      return `<a href="${link}" target="_blank" class="text-blue-400 underline hover:text-blue-300 inline-block">${url}</a>`;
+    });
+    line.innerHTML = `<span class="text-gray-500">${timeStr}</span> ${htmlMsg}`;
     logEl.appendChild(line);
     logEl.scrollTop = logEl.scrollHeight;
   }
