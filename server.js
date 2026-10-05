@@ -822,9 +822,9 @@ async function generateImageOnPage(account, params, taskId) {
 
     // CCTV Bantuan: Ambil foto jika sudah nunggu 30 detik tapi belum beres
     if (i === 10) {
-       emitLog(`[${account.email}] Cek CCTV Layar... (Mencari tahu kenapa lama)`);
+       emitLog(`[${account.email}] Cek CCTV Layar...`);
        await captureDebugSnapshot(page, account, `STUCK-AT-20`);
-       emitLog(`[📸 CCTV] Cek layar di sini: /debug/${account.id}_STUCK-AT-20.png`);
+       emitLog(`[📸 CCTV] Cek layar: /debug/${account.id}_STUCK-AT-20.png`);
     }
 
     const pct = await page.evaluate(() => {
