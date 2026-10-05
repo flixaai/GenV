@@ -746,6 +746,18 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
+  // PENGHANCUR POP-UP & TUTORIAL
+  emitLog(`[${account.email}] Menutup pop-up / iklan (jika ada)...`);
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const closeBtns = btns.filter(b => {
+      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      return t.includes('got it') || t.includes('close') || t.includes('ok');
+    });
+    closeBtns.forEach(b => b.click());
+  }).catch(() => {});
+  await sleep(1500);
+
   emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
@@ -810,23 +822,36 @@ async function generateImageOnPage(account, params, taskId) {
   if (!btnBox) {
     emitLog(`[ERROR] Tombol Generate tetap terkunci / tidak ketemu!`);
     await captureDebugSnapshot(page, account, `BTN-LOCKED`);
-    throw new Error('Tombol Generate masih terkunci oleh website. Cek /debug/BTN-LOCKED.png');
+    throw new Error(`Tombol Generate masih terkunci. Cek: ${ENV.BASE_URL}/debug/BTN-LOCKED.png`);
   }
 
+  // KLIK FISIK MOUSE VIRTUAL YANG LEBIH KUAT
   await page.mouse.move(btnBox.x, btnBox.y);
   await sleep(300);
-  await page.mouse.click(btnBox.x, btnBox.y);
+  await page.mouse.down();
+  await sleep(100);
+  await page.mouse.up();
+  
+  // Klik bayangan untuk memastikan React 100% menerimanya
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find(b => {
+      const txt = b.innerText ? b.innerText.trim() : '';
+      return (txt === 'Generate' || txt === 'Generate Image') && !b.disabled;
+    });
+    if (target) target.click();
+  }).catch(() => {});
 
   let progress = 20, completed = false, resultUrl = null;
 
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
 
-    // CCTV Bantuan
-    if (i === 10) {
+    // CCTV Bantuan dengan Full URL
+    if (i === 15) {
        emitLog(`[${account.email}] Cek CCTV Layar... (Mencari tahu kenapa lama)`);
        await captureDebugSnapshot(page, account, `STUCK-AT-20`);
-       emitLog(`[📸 CCTV] Cek layar di sini: /debug/${account.id}_STUCK-AT-20.png`);
+       emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-20.png`);
     }
 
     const pct = await page.evaluate(() => {
@@ -859,7 +884,7 @@ async function generateImageOnPage(account, params, taskId) {
   if (!completed || !resultUrl) {
     await captureDebugSnapshot(page, account, `FAILED-GENERATE-IMG`);
     await page.close().catch(() => {});
-    throw new Error(`Gagal dapat hasil asli. Cek foto: /debug/${account.id}_FAILED-GENERATE-IMG.png`);
+    throw new Error(`Gagal dapat hasil asli. Cek foto: ${ENV.BASE_URL}/debug/${account.id}_FAILED-GENERATE-IMG.png`);
   }
 
   const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
