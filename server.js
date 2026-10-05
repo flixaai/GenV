@@ -801,12 +801,24 @@ async function checkAccountHealth(account) {
 
     await AccountManager.update(account.id, { statusCookie: 'active', lastCheck: new Date().toISOString() });
 
-    // TODO-SELECTOR: sesuaikan elemen penampil sisa kredit di navbar snapgen.ai
-    const creditText = await page.$eval('[data-testid="credits-balance"]', el => el.textContent).catch(() => null);
-    if (creditText) {
-      const isUnlimited = /unlimited/i.test(creditText);
-      const creditsNum = parseInt((creditText.match(/\d+/) || ['0'])[0]);
-      await AccountManager.update(account.id, { creditsLeft: creditsNum, isUnlimited });
+    // Ambil kredit langsung dari localStorage authStore (data asli snapgen.ai, lebih akurat dari DOM scraping)
+    const creditInfo = await page.evaluate(() => {
+      try {
+        const raw = localStorage.getItem('authStore');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        return (parsed.user && parsed.user.user_credit) ? parsed.user.user_credit : null;
+      } catch (e) {
+        return null;
+      }
+    }).catch(() => null);
+
+    if (creditInfo) {
+      await AccountManager.update(account.id, {
+        creditsLeft: creditInfo.available_credit || 0,
+        isUnlimited: false
+      });
+      emitLog(`[${account.email}] Kredit terbaru: ${creditInfo.available_credit}`);
     }
 
     emitAccountUpdate(await AccountManager.getById(account.id));
@@ -872,8 +884,11 @@ async function enqueueGenerationJob(type, params, source = 'api') {
     try {
       const account = await AccountManager.getOptimalAccount(cost);
       if (!account) {
-        await upsertTask(taskId, { status: 'failed', error: 'Tidak ada akun aktif dengan kredit cukup' });
-        emitProgress(taskId, { status: 'failed', progress: 0, error: 'Tidak ada akun tersedia' });
+        const allAcc = await AccountManager.getAll();
+        const debugInfo = allAcc.map(a => `${a.email}(cookie:${a.statusCookie},proxy:${a.statusProxy},credit:${a.creditsLeft})`).join(' | ');
+        const errMsg = `Tidak ada akun tersedia untuk cost ${cost}. Detail: ${debugInfo}`;
+        await upsertTask(taskId, { status: 'failed', error: errMsg });
+        emitProgress(taskId, { status: 'failed', progress: 0, error: errMsg });
         return;
       }
 
