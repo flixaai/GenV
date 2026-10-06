@@ -731,6 +731,17 @@ async function generateVideoOnPage(account, params, taskId) {
   
   const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
 
+  // --- PENGHANCUR POP-UP FINAL (Tembakan Kedua) ---
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const closeBtns = btns.filter(b => {
+      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      return t === 'got it' || t === 'got it!' || t === 'close' || t === 'ok';
+    });
+    closeBtns.forEach(b => b.click());
+  }).catch(() => {});
+  await sleep(1000);
+
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
   
   const btnBox = await page.evaluate(() => {
