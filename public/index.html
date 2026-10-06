@@ -79,7 +79,6 @@
 
   <!-- ===================== TAB: DASHBOARD ===================== -->
   <div id="tabPanel-dashboard" class="main-tab-panel p-4 md:p-6 max-w-7xl mx-auto">
-
     <!-- STATS PANEL -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       <div class="bg-white rounded-xl shadow p-4">
@@ -129,7 +128,7 @@
     </div>
 
     <!-- SYSTEM LOG -->
-    <div class="bg-black text-green-400 font-mono text-xs rounded-xl p-4 h-48 overflow-y-auto" id="systemLog">
+    <div class="bg-black text-green-400 font-mono text-xs rounded-xl p-4 h-52 overflow-y-auto" id="systemLog">
       <p>[SYSTEM] Menunggu log aktivitas...</p>
     </div>
   </div>
@@ -147,7 +146,17 @@
 
     <!-- ---- VIDEO GENERATOR ---- -->
     <div id="genPanelVideo" class="bg-white rounded-xl shadow p-6 space-y-4">
-      <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-film text-indigo-600"></i> AI Video Generator (Veo)</h2>
+      <div class="flex justify-between items-center flex-wrap gap-2">
+        <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-film text-indigo-600"></i> AI Video Generator</h2>
+        <!-- ENGINE SELECTOR -->
+        <div class="flex items-center gap-2 bg-indigo-50 border border-indigo-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-indigo-800">
+          <label>Mode Engine:</label>
+          <select id="v_engine_mode" class="bg-white border rounded px-2 py-0.5 outline-none">
+            <option value="direct_api">⚡ Direct API (Cepat / 100 User)</option>
+            <option value="browser">🎬 Browser Puppeteer (Ada CCTV)</option>
+          </select>
+        </div>
+      </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
@@ -244,7 +253,17 @@
 
     <!-- ---- IMAGE GENERATOR ---- -->
     <div id="genPanelImage" class="bg-white rounded-xl shadow p-6 space-y-4 hidden">
-      <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-image text-purple-600"></i> AI Image Generator (Imagen)</h2>
+      <div class="flex justify-between items-center flex-wrap gap-2">
+        <h2 class="font-bold text-lg flex items-center gap-2"><i class="fa fa-image text-purple-600"></i> AI Image Generator</h2>
+        <!-- ENGINE SELECTOR -->
+        <div class="flex items-center gap-2 bg-purple-50 border border-purple-200 px-3 py-1.5 rounded-lg text-xs font-semibold text-purple-800">
+          <label>Mode Engine:</label>
+          <select id="i_engine_mode" class="bg-white border rounded px-2 py-0.5 outline-none">
+            <option value="direct_api">⚡ Direct API (Cepat / 100 User)</option>
+            <option value="browser">🎬 Browser Puppeteer (Ada CCTV)</option>
+          </select>
+        </div>
+      </div>
 
       <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
@@ -335,7 +354,7 @@
       <h2 class="text-lg font-bold mb-4"><i class="fa fa-shield-halved text-indigo-600"></i> Pengaturan Captcha Solver</h2>
       <form id="settingsForm" class="space-y-4">
         <div>
-          <label class="text-xs font-medium text-gray-500">Provider Captcha (Pilih & Ubah Kapan Saja)</label>
+          <label class="text-xs font-medium text-gray-500">Provider Captcha (Bisa diganti kapan saja)</label>
           <select id="captchaProvider" class="w-full border p-2 rounded-lg mt-1 bg-gray-50 font-semibold text-gray-700">
             <option value="none">❌ TANPA CAPTCHA (Gunakan Web Unlocker / Bright Data)</option>
             <option value="2captcha">2Captcha</option>
@@ -349,24 +368,20 @@
             <option value="solverecaptcha">SolveRecaptcha</option>
             <option value="rucaptcha">RuCaptcha</option>
             <option value="truecaptcha">TrueCaptcha</option>
-            <option value="9kw">9kw.eu</option>
-            <option value="imagetyperz">ImageTyperz</option>
-            <option value="bypasscaptcha">BypassCaptcha</option>
-            <option value="bestcaptchasolver">BestCaptchaSolver</option>
           </select>
         </div>
         <div>
-          <label class="text-xs font-medium text-gray-500">API Key (Akan menimpa ENV VPS secara otomatis)</label>
-          <input type="text" id="captchaApiKey" class="w-full border p-2 rounded-lg mt-1" placeholder="Kosongkan jika Anda memakai Web Unlocker / Bright Data / Zyte">
+          <label class="text-xs font-medium text-gray-500">API Key</label>
+          <input type="text" id="captchaApiKey" class="w-full border p-2 rounded-lg mt-1" placeholder="Kosongkan jika memakai Web Unlocker / Bright Data">
         </div>
         <label class="flex items-center gap-2 text-sm mt-1 mb-2">
           <input type="checkbox" id="captchaAutoSolve" class="w-4 h-4"> Aktifkan Auto-Solve API (HILANGKAN CENTANG jika pakai Bright Data)
         </label>
         
-        <button type="button" onclick="testSettingsConnection()" class="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-3 rounded-lg text-sm font-bold w-full mt-2 border border-blue-200 transition">
+        <button type="button" onclick="testSettingsConnection()" class="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-3 rounded-lg text-sm font-bold w-full border border-blue-200 transition">
           <i class="fa fa-plug"></i> Cek Koneksi Proxy & Cek Saldo Captcha
         </button>
-        <div id="testConnectionResult" class="text-xs mt-3 hidden p-3 rounded-lg font-mono"></div>
+        <div id="testConnectionResult" class="text-xs mt-2 hidden p-3 rounded-lg font-mono"></div>
 
         <hr class="my-4">
         <h2 class="text-lg font-bold mb-2"><i class="fa fa-network-wired text-indigo-600"></i> Proxy Default (Fallback)</h2>
@@ -393,8 +408,7 @@
   <div id="tabPanel-extractor" class="main-tab-panel p-4 md:p-6 max-w-4xl mx-auto hidden space-y-6">
     <div class="bg-white rounded-xl shadow p-6">
       <h2 class="text-xl font-bold mb-2"><i class="fa fa-spider text-indigo-600"></i> SnapGen UI Extractor</h2>
-      <p class="text-sm text-gray-600 mb-4">Gunakan alat ini <b>HANYA</b> jika SnapGen melakukan update tampilan dan tombol Generate error. Alat ini akan menyedot struktur tombol terbaru mereka (format JSON) tanpa memotong kredit, sehingga Anda bisa mengupdate script robot.</p>
-      
+      <p class="text-sm text-gray-600 mb-4">Gunakan alat ini jika SnapGen update tampilan dan tombol Generate error.</p>
       <div class="flex gap-4 flex-wrap">
         <button onclick="extractUI('image')" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold flex-1 min-w-[200px]">
           <i class="fa fa-image"></i> Ekstrak UI Image Gen
@@ -409,17 +423,12 @@
 
   <!-- ===================== TAB: API DOCS ===================== -->
   <div id="tabPanel-apidocs" class="main-tab-panel p-4 md:p-6 max-w-4xl mx-auto hidden space-y-6">
-
     <div class="bg-white rounded-xl shadow p-6">
       <h2 class="text-xl font-bold mb-2">🔑 Autentikasi</h2>
-      <p class="text-sm text-gray-600 mb-2">Gunakan header berikut pada setiap request ke <code>/api/v1/*</code>:</p>
       <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">X-API-KEY: PUBLIC_API_KEY_ANDA</pre>
     </div>
-
     <div class="bg-white rounded-xl shadow p-6">
       <h2 class="text-xl font-bold mb-2">🎬 POST /api/v1/video/generate</h2>
-
-      <h3 class="font-semibold mt-3 text-sm text-gray-700">cURL</h3>
       <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl -X POST BASE_URL/api/v1/video/generate \
   -H "Content-Type: application/json" \
   -H "X-API-KEY: PUBLIC_API_KEY_ANDA" \
@@ -427,46 +436,11 @@
     "provider": "Veo (Google AI)",
     "model": "Veo 2",
     "prompt": "A futuristic city at sunset",
-    "image_reference": null,
     "orientation": "16:9",
     "resolution": "1080p",
-    "duration": 10,
-    "audio": true
+    "duration": 10
   }'</pre>
-
-      <h3 class="font-semibold mt-3 text-sm text-gray-700">JavaScript (Axios)</h3>
-      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">const axios = require('axios');
-
-const res = await axios.post('BASE_URL/api/v1/video/generate', {
-  provider: "Veo (Google AI)",
-  model: "Veo 2",
-  prompt: "A futuristic city at sunset",
-  orientation: "16:9",
-  resolution: "1080p",
-  duration: 10,
-  audio: true
-}, { headers: { "X-API-KEY": "PUBLIC_API_KEY_ANDA" } });
-
-console.log(res.data);
-// { success: true, taskId: "TASK_12345", cost: 8 }</pre>
-
-      <h3 class="font-semibold mt-3 text-sm text-gray-700">Python</h3>
-      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">import requests
-
-res = requests.post("BASE_URL/api/v1/video/generate",
-  headers={"X-API-KEY": "PUBLIC_API_KEY_ANDA"},
-  json={
-    "provider": "Veo (Google AI)",
-    "model": "Veo 2",
-    "prompt": "A futuristic city at sunset",
-    "orientation": "16:9",
-    "resolution": "1080p",
-    "duration": 10,
-    "audio": True
-  })
-print(res.json())</pre>
     </div>
-
     <div class="bg-white rounded-xl shadow p-6">
       <h2 class="text-xl font-bold mb-2">🖼️ POST /api/v1/image/generate</h2>
       <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl -X POST BASE_URL/api/v1/image/generate \
@@ -477,28 +451,8 @@ print(res.json())</pre>
     "model": "Nano Banana Pro (Free)",
     "prompt": "A cute robot in cyberpunk style",
     "aspect_ratio": "1:1",
-    "resolution": "2K"
+    "resolution": "1K"
   }'</pre>
-    </div>
-
-    <div class="bg-white rounded-xl shadow p-6">
-      <h2 class="text-xl font-bold mb-2">📊 GET /api/v1/task/status/:taskId</h2>
-      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">curl BASE_URL/api/v1/task/status/TASK_12345 \
-  -H "X-API-KEY: PUBLIC_API_KEY_ANDA"</pre>
-      <p class="text-sm text-gray-600 mt-2">Response saat selesai:</p>
-      <pre class="bg-gray-900 text-green-400 p-4 rounded-lg text-sm overflow-x-auto">{
-  "success": true,
-  "status": "completed",
-  "type": "video",
-  "mediaUrl": "BASE_URL/downloads/video_123.mp4",
-  "previewUrl": "...",
-  "creditsLeft": 10
-}</pre>
-    </div>
-
-    <div class="bg-white rounded-xl shadow p-6">
-      <h2 class="text-xl font-bold mb-2">🔔 Webhook (Opsional)</h2>
-      <p class="text-sm text-gray-600">Tambahkan field <code>webhook_url</code> pada payload generate — sistem akan mengirim POST callback ke URL tersebut saat task selesai.</p>
     </div>
   </div>
 
@@ -556,13 +510,9 @@ print(res.json())</pre>
   </div>
 </div>
 
-<!-- ========================= TOAST NOTIFICATION ========================= -->
 <div id="toastContainer" class="fixed bottom-4 right-4 z-50 space-y-2"></div>
 
 <script>
-/* =====================================================================
-   SOCKET.IO CLIENT
-===================================================================== */
 const socket = io();
 let currentVideoTaskId = null;
 let currentImageTaskId = null;
@@ -636,11 +586,8 @@ socket.on('generation-progress', ({ taskId, status, progress, mediaUrl, error })
   }
 });
 
-/* =====================================================================
-   LIVE VIEW (STREAMING DARI ROBOT)
-===================================================================== */
+/* LIVE VIEW (CCTV STREAMING) */
 socket.on('live-view', function(data) {
-  // Untuk Image
   if (data.taskId === currentImageTaskId) {
     let container = document.getElementById('i_live_view_container');
     if (!container) {
@@ -655,7 +602,6 @@ socket.on('live-view', function(data) {
     document.getElementById('i_live_frame').src = data.frame;
   }
   
-  // Untuk Video
   if (data.taskId === currentVideoTaskId) {
     let container = document.getElementById('v_live_view_container');
     if (!container) {
@@ -671,9 +617,6 @@ socket.on('live-view', function(data) {
   }
 });
 
-/* =====================================================================
-   TOAST NOTIFICATION
-===================================================================== */
 function showToast(message, type = 'info') {
   const colors = { success: 'bg-green-600', error: 'bg-red-600', warning: 'bg-yellow-500', info: 'bg-indigo-600' };
   const toast = document.createElement('div');
@@ -683,9 +626,6 @@ function showToast(message, type = 'info') {
   setTimeout(() => toast.remove(), 4000);
 }
 
-/* =====================================================================
-   MODAL HELPERS
-===================================================================== */
 function openModal(id) {
   const el = document.getElementById(id);
   el.classList.remove('hidden');
@@ -697,9 +637,6 @@ function closeModal(id) {
   el.classList.remove('flex');
 }
 
-/* =====================================================================
-   AUTH: LOGIN / LOGOUT / CHECK SESSION
-===================================================================== */
 async function checkSession() {
   try {
     const res = await fetch('/api/admin/check-session');
@@ -740,9 +677,6 @@ async function logoutAdmin() {
   window.location.reload();
 }
 
-/* =====================================================================
-   MAIN TAB NAVIGATION
-===================================================================== */
 function switchMainTab(tab) {
   document.querySelectorAll('.main-tab-panel').forEach(p => p.classList.add('hidden'));
   document.getElementById(`tabPanel-${tab}`).classList.remove('hidden');
@@ -768,9 +702,6 @@ function switchGenTab(tab) {
   document.getElementById('genTabImageBtn').className = tab === 'image' ? 'px-4 py-2 rounded-lg bg-purple-600 text-white text-sm font-medium' : 'px-4 py-2 rounded-lg bg-gray-300 text-sm font-medium';
 }
 
-/* =====================================================================
-   DASHBOARD: ACCOUNTS
-===================================================================== */
 function statusBadge(status) {
   const map = {
     online: '🟢 Online', offline: '🔴 Offline', unknown: '⚪ Unknown',
@@ -837,7 +768,7 @@ document.getElementById('addAccountForm').addEventListener('submit', async (e) =
   closeModal('addAccountModal');
   e.target.reset();
   fetchAccounts();
-  showToast('Akun ditambahkan, proses auto-login berjalan di background...', 'info');
+  showToast('Akun ditambahkan, proses auto-login berjalan...', 'info');
 });
 
 async function triggerRelogin(id) {
@@ -877,9 +808,6 @@ function submitOtpCode() {
   showToast('OTP terkirim, menunggu validasi...', 'info');
 }
 
-/* =====================================================================
-   STATS
-===================================================================== */
 async function fetchStats() {
   const res = await fetch('/api/admin/stats');
   const data = await res.json();
@@ -892,9 +820,6 @@ function updateStatsUI(stats) {
   document.getElementById('statImageApi').textContent = stats.imageFromApi || 0;
 }
 
-/* =====================================================================
-   GENERATOR: VIDEO
-===================================================================== */
 function updateCharCounter(inputId, counterId) {
   document.getElementById(counterId).textContent = document.getElementById(inputId).value.length;
 }
@@ -940,7 +865,8 @@ async function submitGenerateVideo() {
     orientation: document.getElementById('v_orientation').value,
     resolution: document.getElementById('v_resolution').value,
     duration: parseInt(document.getElementById('v_duration').value),
-    audio: document.getElementById('v_audio').checked
+    audio: document.getElementById('v_audio').checked,
+    engineMode: document.getElementById('v_engine_mode').value
   };
 
   document.getElementById('v_progress_wrap').classList.remove('hidden');
@@ -953,11 +879,11 @@ async function submitGenerateVideo() {
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  if (!data.success) { showToast('Gagal memulai generate: ' + data.message, 'error'); return; }
+  if (!data.success) { showToast('Gagal: ' + data.message, 'error'); return; }
 
   currentVideoTaskId = data.taskId;
-  document.getElementById('v_status_text').textContent = `Task: ${data.taskId} | Estimasi: ${data.cost} Credits`;
-  showToast('Video sedang diproses di antrean...', 'info');
+  document.getElementById('v_status_text').textContent = `Task: ${data.taskId} (${payload.engineMode.toUpperCase()}) | Biaya: ${data.cost} Credits`;
+  showToast(`Video diproses via ${payload.engineMode.toUpperCase()}...`, 'info');
 }
 
 async function submitGenerateImage() {
@@ -971,7 +897,8 @@ async function submitGenerateImage() {
     image_reference: document.getElementById('i_image_ref').value || null,
     image_reference_local: document.getElementById('i_image_ref_local').value || null,
     aspect_ratio: document.getElementById('i_aspect').value,
-    resolution: document.getElementById('i_resolution').value
+    resolution: document.getElementById('i_resolution').value,
+    engineMode: document.getElementById('i_engine_mode').value
   };
 
   document.getElementById('i_progress_wrap').classList.remove('hidden');
@@ -984,16 +911,13 @@ async function submitGenerateImage() {
     body: JSON.stringify(payload)
   });
   const data = await res.json();
-  if (!data.success) { showToast('Gagal memulai generate: ' + data.message, 'error'); return; }
+  if (!data.success) { showToast('Gagal: ' + data.message, 'error'); return; }
 
   currentImageTaskId = data.taskId;
-  document.getElementById('i_status_text').textContent = `Task: ${data.taskId} | Estimasi: ${data.cost} Credits`;
-  showToast('Gambar sedang diproses di antrean...', 'info');
+  document.getElementById('i_status_text').textContent = `Task: ${data.taskId} (${payload.engineMode.toUpperCase()}) | Biaya: ${data.cost} Credits`;
+  showToast(`Gambar diproses via ${payload.engineMode.toUpperCase()}...`, 'info');
 }
 
-/* =====================================================================
-   GALLERY
-===================================================================== */
 async function loadGallery() {
   const res = await fetch('/api/admin/gallery');
   const data = await res.json();
@@ -1023,11 +947,8 @@ async function loadGallery() {
   });
 }
 
-/* =====================================================================
-   UI EXTRACTOR (DEBUGGER)
-===================================================================== */
 async function extractUI(type) {
-  showToast(`Memulai ekstraksi UI ${type}... Mohon tunggu ~10 detik`, 'info');
+  showToast(`Memulai ekstraksi UI ${type}...`, 'info');
   const resBox = document.getElementById('extractorResult');
   resBox.classList.remove('hidden');
   resBox.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Robot sedang menyedot data dari SnapGen...';
@@ -1050,13 +971,10 @@ async function extractUI(type) {
   }
 }
 
-/* =====================================================================
-   SETTINGS
-===================================================================== */
 async function loadSettings() {
   const res = await fetch('/api/admin/settings');
   const { data } = await res.json();
-  document.getElementById('captchaProvider').value = data.captchaProvider || '2captcha';
+  document.getElementById('captchaProvider').value = data.captchaProvider || 'none';
   document.getElementById('captchaApiKey').value = data.captchaApiKey || '';
   document.getElementById('captchaAutoSolve').checked = !!data.captchaAutoSolve;
 
@@ -1096,7 +1014,7 @@ async function testSettingsConnection() {
   btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Robot Sedang Mengecek...';
   resBox.classList.remove('hidden', 'bg-green-100', 'text-green-700', 'bg-red-100', 'text-red-700');
   resBox.classList.add('bg-blue-100', 'text-blue-700');
-  resBox.innerHTML = 'Memeriksa status koneksi... (Proses ini butuh waktu ~15 detik)';
+  resBox.innerHTML = 'Memeriksa status koneksi proxy dan saldo...';
   
   try {
     const payload = {
@@ -1126,14 +1044,11 @@ async function testSettingsConnection() {
   } catch(e) {
     resBox.classList.remove('bg-blue-100', 'text-blue-700');
     resBox.classList.add('bg-red-100', 'text-red-700');
-    resBox.innerHTML = `❌ Error Jaringan: API Server Mati / ${e.message}`;
+    resBox.innerHTML = `❌ Error Jaringan: ${e.message}`;
   }
   btn.innerHTML = '<i class="fa fa-plug"></i> Cek Koneksi Proxy & Cek Saldo Captcha';
 }
 
-/* =====================================================================
-   INIT
-===================================================================== */
 function initDashboard() {
   fetchAccounts();
   fetchStats();
