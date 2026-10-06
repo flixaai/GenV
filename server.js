@@ -597,48 +597,44 @@ async function restoreSessionToPage(page, account) {
 }
 
 /* ===================================================================
-   HELPER PENGHANCUR POP-UP & PENCENTANG POLICY (AGRESIF)
+   HELPER AUTO-NUKE POP-UP & POLICY (REAL-TIME BACKGROUND)
 =================================================================== */
 async function clearOverlaysAndCheckboxes(page, email) {
-  emitLog(`[${email}] Membersihkan pop-up dan mencentang policy...`);
+  emitLog(`[${email}] Memasang radar Auto-Nuke untuk pop-up...`);
   await page.evaluate(() => {
-    const buttons = Array.from(document.querySelectorAll('button'));
-    buttons.forEach(btn => {
-      const txt = (btn.innerText || '').toLowerCase();
-      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-      if (txt.includes('got it') || txt.includes('ok') || txt.includes('close') || txt.includes("don't show again") || txt.includes('i understand')) {
-        btn.click();
-      }
-      if (ariaLabel.includes('close') || ariaLabel.includes('dismiss')) {
-        btn.click();
-      }
-    });
-
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => {
-      if (!cb.checked) {
-         cb.click();
-         if (cb.parentElement) {
-            cb.parentElement.click();
-         }
-      }
-    });
-
-    const labels = Array.from(document.querySelectorAll('label, div, span, p'));
-    labels.forEach(el => {
-      const text = (el.innerText || '').toLowerCase();
-      if (text.includes('i understand that intentionally') || text.includes('policy') || text.includes('guidelines')) {
-        const checkbox = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
-        if (checkbox && !checkbox.checked) {
-          el.click();
-        } else if (!checkbox) {
-          el.click();
+    if (window.nukeInterval) {
+       clearInterval(window.nukeInterval);
+    }
+    // Radar akan mengecek layar SETIAP 1 DETIK terus-menerus!
+    window.nukeInterval = setInterval(() => {
+      const buttons = Array.from(document.querySelectorAll('button'));
+      buttons.forEach(btn => {
+        const txt = (btn.innerText || '').toLowerCase();
+        const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+        if (txt.includes('got it') || txt.includes('ok') || txt.includes('close') || txt.includes("don't show again")) {
+          btn.click();
         }
-      }
-    });
+        if (ariaLabel.includes('close') || ariaLabel.includes('dismiss')) {
+          btn.click();
+        }
+      });
+
+      const labels = Array.from(document.querySelectorAll('label, div, span, p'));
+      labels.forEach(el => {
+        const text = (el.innerText || '').toLowerCase();
+        if (text.includes('i understand that intentionally') || text.includes('policy')) {
+          const checkbox = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
+          if (checkbox && !checkbox.checked) {
+            el.click();
+          } else if (!checkbox) {
+            el.click();
+          }
+        }
+      });
+    }, 1000);
   }).catch(() => {});
   
-  await new Promise(r => setTimeout(r, 2500)); 
+  await new Promise(r => setTimeout(r, 1500)); 
 }
 
 /* ===================================================================
@@ -1202,6 +1198,18 @@ async function enqueueGenerationJob(type, params, source = 'api') {
       }
     } catch (err) {
       logger.error(`Job ${taskId} gagal:`, err.message);
+      try {
+        const tasks = await dbRead('tasks', []);
+        const t = tasks.find(x => x.taskId === taskId);
+        if (t && t.accountId && activeBrowsers.has(t.accountId)) {
+          const b = activeBrowsers.get(t.accountId);
+          await b.close();
+          activeBrowsers.delete(t.accountId);
+          emitLog(`[SYSTEM] Browser direstart paksa untuk membersihkan antrean yang tersangkut.`);
+        }
+      } catch (cleanupErr) {
+         // Abaikan error cleanup
+      }
       await upsertTask(taskId, { status: 'failed', error: err.message });
       emitProgress(taskId, { status: 'failed', progress: 0, error: err.message });
     }
