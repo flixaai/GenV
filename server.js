@@ -746,8 +746,7 @@ async function generateImageOnPage(account, params, taskId) {
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  // PENGHANCUR POP-UP & TUTORIAL
-  emitLog(`[${account.email}] Menutup pop-up / iklan (jika ada)...`);
+  emitLog(`[${account.email}] Menutup pop-up (jika ada)...`);
   await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const closeBtns = btns.filter(b => {
@@ -756,13 +755,28 @@ async function generateImageOnPage(account, params, taskId) {
     });
     closeBtns.forEach(b => b.click());
   }).catch(() => {});
-  await sleep(1500);
+  await sleep(1000);
 
-  emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
+  emitLog(`[${account.email}] Memilih Provider & Model...`);
+  const clickText = async (txt) => {
+    if (!txt) return;
+    await page.evaluate((textToFind) => {
+      // Cari nama provider/model di semua elemen yang bisa diklik
+      const els = Array.from(document.querySelectorAll('button, [role="combobox"], [role="option"], [role="tab"]'));
+      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0])); // Ambil kata pertama saja agar lebih cocok
+      if (target) target.click();
+    }, txt);
+  };
+  
+  await clickText(params.provider); // Contoh: "Imagen"
+  await sleep(500);
+  await clickText(params.model);    // Contoh: "Nano"
+  await sleep(1000);
+
+  emitLog(`[${account.email}] Mengetik prompt...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  // Hack gabungan: Ketik fisik + Bypass React state
   await page.evaluate((sel, textVal) => {
     const el = document.querySelector(sel);
     if(el) {
@@ -793,6 +807,16 @@ async function generateImageOnPage(account, params, taskId) {
     }
   }
 
+  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL)
+  emitLog(`[${account.email}] Menyetujui syarat/kebijakan...`);
+  await page.evaluate(() => {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+      if (!cb.checked) cb.click();
+    });
+  }).catch(() => {});
+  await sleep(1000);
+
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
     await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
@@ -802,14 +826,13 @@ async function generateImageOnPage(account, params, taskId) {
   
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE (Pakai Mouse Asli)!`);
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
   
-  // Cari koordinat tombol lalu klik pakai mouse virtual
   const btnBox = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim() : '';
-      const isGen = txt === 'Generate' || txt === 'Generate Image';
+      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      const isGen = txt.includes('generate'); // BACA SEMUA TOMBOL YG MENGANDUNG KATA GENERATE
       const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
       return isGen && !isLocked;
     });
@@ -825,19 +848,17 @@ async function generateImageOnPage(account, params, taskId) {
     throw new Error(`Tombol Generate masih terkunci. Cek: ${ENV.BASE_URL}/debug/BTN-LOCKED.png`);
   }
 
-  // KLIK FISIK MOUSE VIRTUAL YANG LEBIH KUAT
   await page.mouse.move(btnBox.x, btnBox.y);
   await sleep(300);
   await page.mouse.down();
   await sleep(100);
   await page.mouse.up();
   
-  // Klik bayangan untuk memastikan React 100% menerimanya
   await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim() : '';
-      return (txt === 'Generate' || txt === 'Generate Image') && !b.disabled;
+      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      return txt.includes('generate') && !b.disabled;
     });
     if (target) target.click();
   }).catch(() => {});
@@ -847,9 +868,8 @@ async function generateImageOnPage(account, params, taskId) {
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
 
-    // CCTV Bantuan dengan Full URL
     if (i === 15) {
-       emitLog(`[${account.email}] Cek CCTV Layar... (Mencari tahu kenapa lama)`);
+       emitLog(`[${account.email}] Cek CCTV Layar...`);
        await captureDebugSnapshot(page, account, `STUCK-AT-20`);
        emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-20.png`);
     }
