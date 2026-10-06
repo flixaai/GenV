@@ -1128,6 +1128,46 @@ async function generateImageOnPage(account, params, taskId) {
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
 
+    // 1. Radar Deteksi & Klik Kotak Cloudflare Turnstile
+    try {
+      const cfCoords = await page.evaluate(() => {
+        const iframes = Array.from(document.querySelectorAll('iframe'));
+        for (const ifr of iframes) {
+          const src = ifr.src || '';
+          const title = ifr.title || '';
+          if (src.includes('cloudflare') || src.includes('challenge') || src.includes('turnstile') || title.toLowerCase().includes('cloudflare')) {
+            const rect = ifr.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              return { x: rect.left + 30, y: rect.top + (rect.height / 2) };
+            }
+          }
+        }
+        const allDivs = Array.from(document.querySelectorAll('div, section, [role="dialog"]'));
+        const modal = allDivs.find(d => d.innerText && d.innerText.includes("Please verify you're human"));
+        if (modal) {
+          const ifr = modal.querySelector('iframe');
+          if (ifr) {
+            const rect = ifr.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              return { x: rect.left + 30, y: rect.top + (rect.height / 2) };
+            }
+          }
+        }
+        return null;
+      });
+
+      if (cfCoords) {
+        emitLog(`[${account.email}] 🛡️ Cloudflare muncul! Mengklik kotak verifikasi di (${Math.round(cfCoords.x)}, ${Math.round(cfCoords.y)})...`);
+        await page.mouse.move(cfCoords.x, cfCoords.y);
+        await sleep(200);
+        await page.mouse.down();
+        await sleep(150);
+        await page.mouse.up();
+        await sleep(2000);
+      }
+    } catch (err) {}
+
+    // 2. Cek apakah terblokir paywall premium
     const isPremiumBlocked = await page.evaluate(() => {
        const text = document.body.innerText.toLowerCase();
        return text.includes('premium plan required') || text.includes('upgrade to premium');
