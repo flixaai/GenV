@@ -602,6 +602,7 @@ socket.on('generation-progress', ({ taskId, status, progress, mediaUrl, error })
    LIVE VIEW (STREAMING DARI ROBOT)
 ===================================================================== */
 socket.on('live-view', function(data) {
+  // Untuk Image
   if (data.taskId === currentImageTaskId) {
     let container = document.getElementById('i_live_view_container');
     if (!container) {
@@ -614,6 +615,21 @@ socket.on('live-view', function(data) {
       `);
     }
     document.getElementById('i_live_frame').src = data.frame;
+  }
+  
+  // Untuk Video
+  if (data.taskId === currentVideoTaskId) {
+    let container = document.getElementById('v_live_view_container');
+    if (!container) {
+      const wrap = document.getElementById('v_progress_wrap');
+      wrap.insertAdjacentHTML('beforeend', `
+        <div id="v_live_view_container" class="mt-4 border-2 border-dashed border-gray-400 rounded-lg p-2 bg-gray-50">
+           <p class="text-xs text-gray-500 font-bold mb-2 flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> LIVE SERVER VIEW</p>
+           <img id="v_live_frame" class="w-full rounded shadow-sm" src="">
+        </div>
+      `);
+    }
+    document.getElementById('v_live_frame').src = data.frame;
   }
 });
 
