@@ -604,26 +604,13 @@ async function clearOverlaysAndCheckboxes(page, email) {
   await page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll('button'));
     buttons.forEach(btn => {
-      const txt = (btn.innerText || '').trim().toLowerCase();
-      if (txt === 'got it!' || txt === 'got it' || txt === 'close' || txt === 'ok' || txt === 'i understand') {
-        btn.click();
-      }
+      const txt = (btn.innerText || '').toLowerCase();
       const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
-      if (ariaLabel.includes('close')) {
+      if (txt.includes('got it') || txt.includes('ok') || txt.includes('close') || txt.includes("don't show again") || txt.includes('i understand')) {
         btn.click();
       }
-    });
-
-    const labels = Array.from(document.querySelectorAll('label, div, span'));
-    labels.forEach(el => {
-      const text = (el.innerText || '').toLowerCase();
-      if (text.includes('i understand that intentionally') || text.includes('policy') || text.includes('guidelines')) {
-        const checkbox = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
-        if (checkbox && !checkbox.checked) {
-          el.click();
-        } else if (!checkbox) {
-          el.click();
-        }
+      if (ariaLabel.includes('close') || ariaLabel.includes('dismiss')) {
+        btn.click();
       }
     });
 
@@ -636,9 +623,22 @@ async function clearOverlaysAndCheckboxes(page, email) {
          }
       }
     });
+
+    const labels = Array.from(document.querySelectorAll('label, div, span, p'));
+    labels.forEach(el => {
+      const text = (el.innerText || '').toLowerCase();
+      if (text.includes('i understand that intentionally') || text.includes('policy') || text.includes('guidelines')) {
+        const checkbox = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
+        if (checkbox && !checkbox.checked) {
+          el.click();
+        } else if (!checkbox) {
+          el.click();
+        }
+      }
+    });
   }).catch(() => {});
   
-  await new Promise(r => setTimeout(r, 1500)); 
+  await new Promise(r => setTimeout(r, 2500)); 
 }
 
 /* ===================================================================
