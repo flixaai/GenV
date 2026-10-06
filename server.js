@@ -1,9 +1,9 @@
 /**
  * =====================================================================
- * SNAPGEN AI WRAPPER - ADMIN DASHBOARD & AUTOMATION ENGINE
+ * SNAPGEN AI WRAPPER - ADMIN DASHBOARD & DUAL HYBRID AUTOMATION ENGINE
  * =====================================================================
- * Single-file backend: Express + Socket.io + Puppeteer-Extra (Stealth)
- * + Queue System + JSON Database + Captcha Solver + REST API
+ * Mode 1: Direct API (Super Cepat, Ultra Ringan untuk Skala 100+ User)
+ * Mode 2: Browser Puppeteer (Full CCTV Streaming + Auto-Click Cloudflare)
  * =====================================================================
  */
 
@@ -36,13 +36,13 @@ const ENV = {
   ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'admin123',
   SESSION_SECRET: process.env.SESSION_SECRET || 'change_this_secret_key',
   PUBLIC_API_KEY: process.env.PUBLIC_API_KEY || 'sk_default_change_me',
-  CAPTCHA_PROVIDER: process.env.CAPTCHA_PROVIDER || '2captcha',
+  CAPTCHA_PROVIDER: process.env.CAPTCHA_PROVIDER || 'none',
   CAPTCHA_API_KEY: process.env.CAPTCHA_API_KEY || '',
-  CAPTCHA_AUTO_SOLVE: process.env.CAPTCHA_AUTO_SOLVE !== 'false',
+  CAPTCHA_AUTO_SOLVE: process.env.CAPTCHA_AUTO_SOLVE === 'true',
   HEADLESS: process.env.HEADLESS !== 'false',
   PUPPETEER_EXECUTABLE_PATH: process.env.PUPPETEER_EXECUTABLE_PATH || null,
   BASE_URL: process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`,
-  QUEUE_CONCURRENCY: parseInt(process.env.QUEUE_CONCURRENCY || '2'),
+  QUEUE_CONCURRENCY: parseInt(process.env.QUEUE_CONCURRENCY || '3'),
   DOCKER_MODE: process.env.DOCKER_MODE === 'true'
 };
 
@@ -53,15 +53,14 @@ const DATA_DIR = path.join(__dirname, 'data');
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 const DOWNLOADS_DIR = path.join(__dirname, 'downloads');
 const UPLOADS_DIR = path.join(__dirname, 'uploads');
+const DEBUG_DIR = path.join(__dirname, 'debug');
 
 fs.ensureDirSync(DATA_DIR);
 fs.ensureDirSync(SESSIONS_DIR);
 fs.ensureDirSync(DOWNLOADS_DIR);
 fs.ensureDirSync(UPLOADS_DIR);
+fs.ensureDirSync(DEBUG_DIR);
 
-/* ===================================================================
-   LOGGER SEDERHANA
-=================================================================== */
 function ts() { return new Date().toISOString(); }
 const logger = {
   info: (...a) => console.log(`[INFO ${ts()}]`, ...a),
@@ -71,7 +70,7 @@ const logger = {
 };
 
 /* ===================================================================
-   JSON DATABASE (FILE-BASED, DENGAN SIMPLE LOCK)
+   JSON DATABASE (FILE-BASED DENGAN LOCK)
 =================================================================== */
 const _locks = {};
 
@@ -101,25 +100,18 @@ async function dbWrite(name, data) {
   }
 }
 
-// Inisialisasi file database awal
 (async () => {
   await dbRead('accounts', []);
   await dbRead('settings', {
-    captchaProvider: ENV.CAPTCHA_PROVIDER,
-    captchaApiKey: ENV.CAPTCHA_API_KEY,
-    captchaAutoSolve: ENV.CAPTCHA_AUTO_SOLVE,
+    captchaProvider: 'none',
+    captchaApiKey: '',
+    captchaAutoSolve: false,
     defaultProxy: { host: '', port: '', username: '', password: '', type: 'http' }
   });
-  await dbRead('stats', {
-    videoFromDashboard: 0, videoFromApi: 0,
-    imageFromDashboard: 0, imageFromApi: 0
-  });
+  await dbRead('stats', { videoFromDashboard: 0, videoFromApi: 0, imageFromDashboard: 0, imageFromApi: 0 });
   await dbRead('tasks', []);
 })();
 
-/* ===================================================================
-   HELPER FUNCTIONS
-=================================================================== */
 function genTaskId(prefix = 'TASK') {
   return `${prefix}_${Date.now()}_${uuidv4().slice(0, 8)}`;
 }
@@ -130,13 +122,24 @@ function buildProxyUrl(proxy) {
   return `${protocol}://${proxy.host}:${proxy.port}`;
 }
 
+async function getEffectiveProxy(account) {
+  if (account && account.proxy && account.proxy.host) {
+    return account.proxy;
+  }
+  try {
+    const settings = await dbRead('settings', {});
+    if (settings && settings.defaultProxy && settings.defaultProxy.host) {
+      return settings.defaultProxy;
+    }
+  } catch (e) {}
+  return null;
+}
+
 /* ===================================================================
    ACCOUNT MANAGER
 =================================================================== */
 const AccountManager = {
-  async getAll() {
-    return dbRead('accounts', []);
-  },
+  async getAll() { return dbRead('accounts', []); },
   async getById(id) {
     const all = await this.getAll();
     return all.find(a => a.id === id) || null;
@@ -151,6 +154,7 @@ const AccountManager = {
       statusCookie: 'expired',
       creditsLeft: 0,
       isUnlimited: false,
+      bearerToken: null,
       sessionFile: `./sessions/${id}.json`,
       lastLogin: null,
       lastCheck: null,
@@ -180,20 +184,22 @@ const AccountManager = {
   async saveSession(id, sessionData) {
     const sp = path.join(SESSIONS_DIR, `${id}.json`);
     await fs.writeJson(sp, sessionData, { spaces: 2 });
-    return this.update(id, { statusCookie: 'active', lastLogin: new Date().toISOString() });
+    return this.update(id, { 
+      statusCookie: 'active', 
+      bearerToken: sessionData.bearerToken || null,
+      lastLogin: new Date().toISOString() 
+    });
   },
   async loadSession(id) {
     const sp = path.join(SESSIONS_DIR, `${id}.json`);
     if (!(await fs.pathExists(sp))) return null;
     return fs.readJson(sp);
   },
-  // Round-robin + filter status aktif & kredit cukup
   _rrIndex: 0,
   async getOptimalAccount(costRequired = 1) {
     const all = await this.getAll();
     const eligible = all.filter(a =>
       a.statusCookie === 'active' &&
-      a.statusProxy === 'online' &&
       (a.isUnlimited || a.creditsLeft >= costRequired)
     );
     if (eligible.length === 0) return null;
@@ -203,7 +209,7 @@ const AccountManager = {
 };
 
 /* ===================================================================
-   SOCKET.IO HANDLER (didefinisikan di sini, di-attach setelah io dibuat)
+   SOCKET.IO SYSTEM
 =================================================================== */
 let ioInstance = null;
 const pendingOtpResolvers = new Map();
@@ -211,18 +217,12 @@ const pendingOtpResolvers = new Map();
 function initSocket(io) {
   ioInstance = io;
   io.on('connection', (socket) => {
-    logger.info('Dashboard terhubung via socket:', socket.id);
-
+    logger.info('Dashboard terhubung:', socket.id);
     socket.on('submit-otp', ({ accountId, otp }) => {
-      logger.info(`OTP diterima untuk ${accountId}: ${otp}`);
       if (pendingOtpResolvers.has(accountId)) {
         pendingOtpResolvers.get(accountId)(otp);
         pendingOtpResolvers.delete(accountId);
       }
-    });
-
-    socket.on('disconnect', () => {
-      logger.info('Socket terputus:', socket.id);
     });
   });
 }
@@ -247,8 +247,10 @@ function emitHealthStatus(status) { if (ioInstance) ioInstance.emit('health-stat
 function emitProgress(taskId, data) { if (ioInstance) ioInstance.emit('generation-progress', { taskId, ...data }); }
 function emitLog(message) { if (ioInstance) ioInstance.emit('system-log', { message, time: new Date().toISOString() }); }
 
+async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
 /* ===================================================================
-   CAPTCHA SOLVER (2Captcha, CapSolver, Anti-Captcha, NextCaptcha)
+   CAPTCHA SOLVER & DETECTION
 =================================================================== */
 const CAPTCHA_ENDPOINTS = {
   '2captcha': 'https://api.2captcha.com',
@@ -256,8 +258,6 @@ const CAPTCHA_ENDPOINTS = {
   'anticaptcha': 'https://api.anti-captcha.com',
   'nextcaptcha': 'https://api.nextcaptcha.com'
 };
-
-async function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 async function solveCaptcha(provider, apiKey, { type, siteKey, pageUrl }) {
   const base = CAPTCHA_ENDPOINTS[provider] || CAPTCHA_ENDPOINTS['2captcha'];
@@ -270,13 +270,11 @@ async function solveCaptcha(provider, apiKey, { type, siteKey, pageUrl }) {
 
   const taskId = createRes.data.taskId;
   if (!taskId) throw new Error('Gagal membuat task captcha: ' + JSON.stringify(createRes.data));
-  logger.info(`[Captcha:${provider}] Task dibuat:`, taskId);
 
   for (let i = 0; i < 30; i++) {
     await sleep(5000);
     const resultRes = await axios.post(`${base}/getTaskResult`, { clientKey: apiKey, taskId });
     if (resultRes.data.status === 'ready') {
-      logger.success('[Captcha] Berhasil diselesaikan');
       return resultRes.data.solution.token || resultRes.data.solution.gRecaptchaResponse;
     }
   }
@@ -284,11 +282,10 @@ async function solveCaptcha(provider, apiKey, { type, siteKey, pageUrl }) {
 }
 
 async function detectAndSolveCaptcha(page, provider, apiKey) {
+  if (!provider || provider === 'none' || !apiKey) return false;
   const siteInfo = await page.evaluate(() => {
     const turnstileEl = document.querySelector('[data-sitekey]');
     const iframeTurnstile = document.querySelector('iframe[src*="challenges.cloudflare.com"]');
-    const iframeHcaptcha = document.querySelector('iframe[src*="hcaptcha.com"]');
-
     if (turnstileEl) return { type: 'turnstile', siteKey: turnstileEl.getAttribute('data-sitekey') };
     if (iframeTurnstile) {
       try {
@@ -296,19 +293,11 @@ async function detectAndSolveCaptcha(page, provider, apiKey) {
         return { type: 'turnstile', siteKey: url.searchParams.get('sitekey') };
       } catch (e) { return null; }
     }
-    if (iframeHcaptcha) {
-      try {
-        const url = new URL(iframeHcaptcha.src);
-        return { type: 'hcaptcha', siteKey: url.searchParams.get('sitekey') };
-      } catch (e) { return null; }
-    }
     return null;
   });
 
   if (!siteInfo || !siteInfo.siteKey) return false;
-
-  const pageUrl = page.url();
-  const token = await solveCaptcha(provider, apiKey, { type: siteInfo.type, siteKey: siteInfo.siteKey, pageUrl });
+  const token = await solveCaptcha(provider, apiKey, { type: siteInfo.type, siteKey: siteInfo.siteKey, pageUrl: page.url() });
 
   await page.evaluate((tok, type) => {
     const fieldName = type === 'turnstile' ? 'cf-turnstile-response' : 'h-captcha-response';
@@ -321,10 +310,63 @@ async function detectAndSolveCaptcha(page, provider, apiKey) {
     }
     el.value = tok;
     if (window.turnstileCallback) window.turnstileCallback(tok);
-    if (window.hcaptchaCallback) window.hcaptchaCallback(tok);
   }, token, siteInfo.type);
 
   return true;
+}
+
+/* ===================================================================
+   RADAR AUTO-KLIK CLOUDFLARE TURNSTILE (PRESISI TINGGI)
+=================================================================== */
+async function solveTurnstileWidget(page, email) {
+  try {
+    // 1. Klik via Frame Internal
+    for (const f of page.frames()) {
+      if (f.url().includes('challenges.cloudflare.com') || f.url().includes('turnstile')) {
+        const cb = await f.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label, body');
+        if (cb) {
+          emitLog(`[${email}] 🛡️ Mendeteksi Cloudflare Turnstile di frame, mengklik...`);
+          await cb.click().catch(() => {});
+        }
+      }
+    }
+
+    // 2. Klik via Koordinat Pixel
+    const coords = await page.evaluate(() => {
+      const iframes = Array.from(document.querySelectorAll('iframe'));
+      for (const ifr of iframes) {
+        const src = (ifr.src || '').toLowerCase();
+        const title = (ifr.title || '').toLowerCase();
+        if (src.includes('cloudflare') || src.includes('challenge') || src.includes('turnstile') || title.includes('cloudflare')) {
+          const r = ifr.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) return { x: r.left + 30, y: r.top + (r.height / 2) };
+        }
+      }
+      const allDivs = Array.from(document.querySelectorAll('div, section, [role="dialog"]'));
+      const modal = allDivs.find(d => {
+        const t = (d.innerText || '').toLowerCase();
+        return t.includes("verify you're human") || t.includes("verify you are human");
+      });
+      if (modal) {
+        const ifr = modal.querySelector('iframe');
+        if (ifr) {
+          const r = ifr.getBoundingClientRect();
+          if (r.width > 0 && r.height > 0) return { x: r.left + 30, y: r.top + (r.height / 2) };
+        }
+      }
+      return null;
+    });
+
+    if (coords) {
+      emitLog(`[${email}] 🛡️ Mengklik kotak verifikasi Cloudflare di (${Math.round(coords.x)}, ${Math.round(coords.y)})...`);
+      await page.mouse.move(coords.x, coords.y, { steps: 5 });
+      await sleep(150);
+      await page.mouse.down();
+      await sleep(100);
+      await page.mouse.up();
+      await sleep(1000);
+    }
+  } catch (e) {}
 }
 
 /* ===================================================================
@@ -332,25 +374,10 @@ async function detectAndSolveCaptcha(page, provider, apiKey) {
 =================================================================== */
 const activeBrowsers = new Map();
 
-async function getEffectiveProxy(account) {
-  if (account && account.proxy && account.proxy.host) {
-    return account.proxy;
-  }
-  try {
-    const settings = await dbRead('settings', {});
-    if (settings && settings.defaultProxy && settings.defaultProxy.host) {
-      return settings.defaultProxy;
-    }
-  } catch (e) {}
-  return null;
-}
-
 async function launchBrowserForAccount(account) {
   if (activeBrowsers.has(account.id)) {
     const existing = activeBrowsers.get(account.id);
-    if (existing.isConnected()) {
-      return existing;
-    }
+    if (existing.isConnected()) return existing;
     activeBrowsers.delete(account.id);
   }
 
@@ -371,9 +398,7 @@ async function launchBrowserForAccount(account) {
 
   const effectiveProxy = await getEffectiveProxy(account);
   const proxyUrl = buildProxyUrl(effectiveProxy);
-  if (proxyUrl) {
-    args.push(`--proxy-server=${proxyUrl}`);
-  }
+  if (proxyUrl) args.push(`--proxy-server=${proxyUrl}`);
 
   const browser = await puppeteer.launch({
     headless: ENV.HEADLESS ? 'new' : false,
@@ -383,9 +408,7 @@ async function launchBrowserForAccount(account) {
   });
 
   activeBrowsers.set(account.id, browser);
-  browser.on('disconnected', () => {
-    activeBrowsers.delete(account.id);
-  });
+  browser.on('disconnected', () => activeBrowsers.delete(account.id));
   return browser;
 }
 
@@ -396,24 +419,6 @@ async function newPageWithProxyAuth(browser, account) {
     await page.authenticate({ username: effectiveProxy.username, password: effectiveProxy.password });
   }
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
-  
-  // Radar Auto-Klik Cloudflare Turnstile (berjalan setiap 2 detik)
-  const turnstileWatcher = setInterval(async () => {
-    if (page.isClosed()) {
-      clearInterval(turnstileWatcher);
-      return;
-    }
-    try {
-      const cfIframe = await page.$('iframe[src*="challenges.cloudflare.com"]');
-      if (cfIframe) {
-        const box = await cfIframe.boundingBox();
-        if (box) {
-          emitLog(`[${account.email}] 🛡️ Cloudflare muncul! Mengklik kotak verifikasi...`);
-          await page.mouse.click(box.x + 35, box.y + (box.height / 2));
-        }
-      }
-    } catch (e) {}
-  }, 2000);
 
   await page.setRequestInterception(true);
   page.on('request', (req) => {
@@ -432,40 +437,22 @@ async function checkProxyAlive(page) {
     const resp = await page.goto('https://api.ipify.org?format=json', { timeout: 15000, waitUntil: 'domcontentloaded' });
     return resp && resp.ok();
   } catch (e) {
-    logger.warn('Cek proxy gagal:', e.message);
     return false;
   }
 }
 
-/* ===================================================================
-   LOGIN FLOW / AUTO-LOGIN / RESTORE SESSION
-=================================================================== */
-const LOGIN_URL = 'https://snapgen.ai/auth/login'; // URL terverifikasi dari screenshot user
-
-async function getCaptchaSettings() {
-  const settings = await dbRead('settings', {});
-  return {
-    provider: settings.captchaProvider || '2captcha',
-    apiKey: settings.captchaApiKey || '',
-    autoSolve: settings.captchaAutoSolve !== false
-  };
-}
-
-const DEBUG_DIR = path.join(__dirname, 'debug');
-fs.ensureDirSync(DEBUG_DIR);
-
 async function captureDebugSnapshot(page, account, label) {
   try {
     const screenshotPath = path.join(DEBUG_DIR, `${account.id}_${label}.png`);
-    const htmlPath = path.join(DEBUG_DIR, `${account.id}_${label}.html`);
     await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
-    const html = await page.content().catch(() => '');
-    await fs.writeFile(htmlPath, html).catch(() => {});
     emitLog(`[${account.email}] 📸 Snapshot: /debug/${account.id}_${label}.png`);
-  } catch (e) {
-    logger.error('Gagal capture debug snapshot:', e.message);
-  }
+  } catch (e) {}
 }
+
+/* ===================================================================
+   AUTO-LOGIN FLOW
+=================================================================== */
+const LOGIN_URL = 'https://snapgen.ai/auth/login';
 
 async function autoLogin(account) {
   emitLog(`[${account.email}] Memulai Auto-Login...`);
@@ -476,111 +463,52 @@ async function autoLogin(account) {
   await AccountManager.update(account.id, { statusProxy: proxyAlive ? 'online' : 'offline' });
   emitAccountUpdate(await AccountManager.getById(account.id));
 
-  if (!proxyAlive) {
-    await page.close().catch(() => {});
-    throw new Error('Proxy tidak merespon / mati');
-  }
+  await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  await sleep(3000);
 
-  await page.goto(LOGIN_URL, { waitUntil: 'networkidle2', timeout: 60000 }).catch(async (e) => {
-    await captureDebugSnapshot(page, account, 'goto-failed');
-    throw new Error(`Gagal membuka halaman login: ${e.message}`);
-  });
-
-  await sleep(5000);
-  await captureDebugSnapshot(page, account, 'step1-page-loaded');
-
-  const EMAIL_SELECTOR = 'input[type="email"], input[name="email"], input[id*="email" i], input[placeholder*="email" i]';
-  const PASSWORD_SELECTOR = 'input[type="password"], input[name="password"], input[id*="password" i]';
+  const EMAIL_SELECTOR = 'input[type="email"], input[name="email"], input[placeholder*="email" i]';
+  const PASSWORD_SELECTOR = 'input[type="password"], input[name="password"]';
   const OTP_SELECTOR = 'input[name="otp"], input[autocomplete="one-time-code"], input[placeholder*="code" i]';
 
-  try {
-    await page.waitForSelector(EMAIL_SELECTOR, { timeout: 45000, visible: true });
-  } catch (err) {
-    const allInputsInfo = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('input')).map(el => ({
-        type: el.type, name: el.name, id: el.id, placeholder: el.placeholder, className: el.className
-      }));
-    }).catch(() => []);
-
-    const dumpPath = path.join(DEBUG_DIR, `${account.id}_input-dump.json`);
-    await fs.writeJson(dumpPath, allInputsInfo, { spaces: 2 }).catch(() => {});
-
-    await captureDebugSnapshot(page, account, 'selector-not-found');
-    const currentUrl = page.url();
-    const pageTitle = await page.title().catch(() => 'unknown');
-    await page.close().catch(() => {});
-    throw new Error(`Form email tidak ditemukan. URL: ${currentUrl} | Title: "${pageTitle}" | Total input ditemukan: ${allInputsInfo.length} | Cek: /debug/${account.id}_input-dump.json`);
-  }
-
+  await page.waitForSelector(EMAIL_SELECTOR, { timeout: 45000, visible: true });
   await page.click(EMAIL_SELECTOR);
   await page.type(EMAIL_SELECTOR, account.email, { delay: 60 });
   await page.click(PASSWORD_SELECTOR);
   await page.type(PASSWORD_SELECTOR, account.password, { delay: 60 });
 
-  await captureDebugSnapshot(page, account, 'step2-form-filled');
+  await solveTurnstileWidget(page, account.email);
 
-  const { provider, apiKey, autoSolve } = await getCaptchaSettings();
-  if (autoSolve && apiKey) {
-    try {
-      const solved = await detectAndSolveCaptcha(page, provider, apiKey);
-      if (solved) emitLog(`[${account.email}] Captcha berhasil diselesaikan otomatis.`);
-    } catch (e) {
-      logger.warn('Captcha solve gagal/tidak ditemukan:', e.message);
-    }
-  }
-
-  const clicked = await page.evaluate(() => {
+  await page.evaluate(() => {
     const buttons = Array.from(document.querySelectorAll('button'));
     const target = buttons.find(b => /continue|sign in|log ?in|masuk/i.test(b.textContent));
-    if (target) { target.click(); return true; }
-    return false;
+    if (target) target.click();
+    else document.querySelector('button[type="submit"]')?.click();
   });
-  if (!clicked) await page.click('button[type="submit"]').catch(() => {});
 
   await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-  await sleep(1500);
-  await captureDebugSnapshot(page, account, 'step3-after-submit');
+  await sleep(2000);
 
   const otpField = await page.$(OTP_SELECTOR);
   if (otpField) {
     await AccountManager.update(account.id, { statusCookie: 'need_otp' });
     emitAccountUpdate(await AccountManager.getById(account.id));
-    emitLog(`[${account.email}] Menunggu input OTP dari Admin Dashboard...`);
+    emitLog(`[${account.email}] Menunggu input OTP dari Admin...`);
 
     const otp = await requestOtpFromAdmin(account.id, account.email);
     await page.type(OTP_SELECTOR, otp, { delay: 80 });
-
-    const otpClicked = await page.evaluate(() => {
-      const buttons = Array.from(document.querySelectorAll('button'));
-      const target = buttons.find(b => /continue|verify|submit|confirm/i.test(b.textContent));
-      if (target) { target.click(); return true; }
-      return false;
+    await page.evaluate(() => {
+      const btn = Array.from(document.querySelectorAll('button')).find(b => /continue|verify|submit/i.test(b.textContent));
+      if (btn) btn.click();
     });
-    if (!otpClicked) await page.click('button[type="submit"]').catch(() => {});
-
     await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 30000 }).catch(() => {});
-  }
-
-  const currentUrl = page.url();
-  if (currentUrl.includes('/auth/') || currentUrl.includes('/login')) {
-    await captureDebugSnapshot(page, account, 'login-failed-still-on-auth-page');
-    const errorText = await page.evaluate(() => {
-      const el = document.querySelector('[role="alert"], .error, .text-red-500, .text-danger');
-      return el ? el.textContent.trim() : null;
-    }).catch(() => null);
-
-    await AccountManager.update(account.id, { statusCookie: 'expired' });
-    emitAccountUpdate(await AccountManager.getById(account.id));
-    await page.close().catch(() => {});
-    throw new Error(`Login gagal di ${currentUrl}. ${errorText ? 'Pesan: ' + errorText : ''} Cek: /debug/${account.id}_login-failed-still-on-auth-page.png`);
   }
 
   const cookies = await page.cookies();
   const localStorageData = await page.evaluate(() => {
     const data = {};
     for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      data[key] = localStorage.getItem(key);
+      const k = localStorage.key(i);
+      data[k] = localStorage.getItem(k);
     }
     return data;
   });
@@ -591,15 +519,11 @@ async function autoLogin(account) {
   try {
     const authStoreRaw = localStorageData['authStore'];
     if (authStoreRaw) {
-      const authParsed = JSON.parse(authStoreRaw);
-      if (authParsed.access_token) bearerToken = authParsed.access_token;
-      if (authParsed.user && authParsed.user.user_credit) {
-        parsedCredit = authParsed.user.user_credit;
-      }
+      const parsed = JSON.parse(authStoreRaw);
+      if (parsed.access_token) bearerToken = parsed.access_token;
+      if (parsed.user && parsed.user.user_credit) parsedCredit = parsed.user.user_credit;
     }
-  } catch (e) {
-    logger.warn('Gagal parsing authStore:', e.message);
-  }
+  } catch (e) {}
 
   const sessionData = { cookies, localStorage: localStorageData, bearerToken, savedAt: new Date().toISOString() };
   await AccountManager.saveSession(account.id, sessionData);
@@ -611,7 +535,7 @@ async function autoLogin(account) {
     });
   }
 
-  emitLog(`[${account.email}] ✅ Login berhasil, sesi tersimpan. Kredit: ${parsedCredit ? parsedCredit.available_credit : 'unknown'}`);
+  emitLog(`[${account.email}] ✅ Login berhasil! Kredit: ${parsedCredit ? parsedCredit.available_credit : 'unknown'}`);
   emitAccountUpdate(await AccountManager.getById(account.id));
 
   await page.close().catch(() => {});
@@ -623,9 +547,7 @@ async function restoreSessionToPage(page, account) {
   if (!session) return false;
 
   await page.goto('https://snapgen.ai', { waitUntil: 'domcontentloaded', timeout: 30000 });
-  if (session.cookies && session.cookies.length) {
-    await page.setCookie(...session.cookies);
-  }
+  if (session.cookies && session.cookies.length) await page.setCookie(...session.cookies);
   if (session.localStorage) {
     await page.evaluate((data) => {
       for (const k in data) localStorage.setItem(k, data[k]);
@@ -635,99 +557,35 @@ async function restoreSessionToPage(page, account) {
 }
 
 /* ===================================================================
-   HELPER AUTO-NUKE POP-UP & POLICY (REAL-TIME BACKGROUND)
+   HELPER AUTO-NUKE POP-UP & POLICY
 =================================================================== */
 async function clearOverlaysAndCheckboxes(page, email) {
-  emitLog(`[${email}] Memasang radar Auto-Nuke untuk pop-up & Checkbox...`);
-  
   await page.evaluate(() => {
-    if (window.nukeInterval) {
-       clearInterval(window.nukeInterval);
-    }
-    
-    window.nukeInterval = setInterval(() => {
-      // 1. Hancurkan Pop-up Button
-      const clickables = document.querySelectorAll('button, a, [role="button"]');
-      clickables.forEach(btn => {
-        const txt = (btn.innerText || '').toLowerCase().trim();
-        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
-        
-        if (txt === "don't show again" || txt === "ok" || txt === "got it" || txt === "dismiss" || aria.includes('close')) {
-          if (btn.offsetParent !== null && !btn.disabled) {
-            btn.click();
-          }
-        }
-      });
+    const clickables = document.querySelectorAll('button, a, [role="button"]');
+    clickables.forEach(btn => {
+      const txt = (btn.innerText || '').toLowerCase().trim();
+      const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+      if (txt === "don't show again" || txt === "ok" || txt === "got it" || txt === "dismiss" || aria.includes('close')) {
+        if (!btn.disabled) btn.click();
+      }
+    });
 
-      // 2. Hancurkan SVG Close Icon
-      const svgs = document.querySelectorAll('svg');
-      svgs.forEach(svg => {
-         const parentBtn = svg.closest('button, [role="button"]');
-         if (parentBtn && parentBtn.offsetHeight > 0) {
-            const aria = (parentBtn.getAttribute('aria-label') || '').toLowerCase();
-            const classes = (svg.getAttribute('class') || '').toLowerCase();
-            if (aria.includes('close') || aria.includes('dismiss') || classes.includes('close')) {
-               parentBtn.click();
-            }
-         }
-      });
-
-      // 3. Centang Kotak Kuning
-      const elements = Array.from(document.querySelectorAll('label, p, span, div'));
-      const policyEl = elements.find(el => el.innerText && el.innerText.toLowerCase().includes('i understand that intentionally'));
-      
-      if (policyEl) {
-        const container = policyEl.closest('label') || policyEl.parentElement;
-        if (container) {
-          const customCb = container.querySelector('[role="checkbox"]');
-          if (customCb && customCb.getAttribute('aria-checked') !== 'true') {
-            customCb.click();
-          }
-          
-          const nativeCb = container.querySelector('input[type="checkbox"]');
-          if (nativeCb && !nativeCb.checked) {
-            nativeCb.click();
-            nativeCb.dispatchEvent(new Event('change', { bubbles: true }));
-          }
+    const elements = Array.from(document.querySelectorAll('label, p, span, div'));
+    const policyEl = elements.find(el => el.innerText && el.innerText.toLowerCase().includes('i understand that intentionally'));
+    if (policyEl) {
+      const container = policyEl.closest('label') || policyEl.parentElement;
+      if (container) {
+        const customCb = container.querySelector('[role="checkbox"]');
+        if (customCb && customCb.getAttribute('aria-checked') !== 'true') customCb.click();
+        const nativeCb = container.querySelector('input[type="checkbox"]');
+        if (nativeCb && !nativeCb.checked) {
+          nativeCb.click();
+          nativeCb.dispatchEvent(new Event('change', { bubbles: true }));
         }
       }
-
-      // 4. Force check checkbox kosong
-      document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        if (!cb.checked) {
-           cb.click();
-           cb.dispatchEvent(new Event('change', { bubbles: true }));
-        }
-      });
-    }, 1000);
+    }
   }).catch(() => {});
-  
-  await new Promise(r => setTimeout(r, 2000)); 
-}
-
-/* ===================================================================
-   VIDEO GENERATION FLOW
-=================================================================== */
-const VIDEO_GEN_URL = 'https://snapgen.ai/app/video-gen/veo';
-
-async function selectDropdownByLabel(page, selector, label) {
-  if (!label) return;
-  try {
-    await page.click(selector);
-    await sleep(300);
-    const optionSelector = '[role="option"]';
-    await page.waitForSelector(optionSelector, { timeout: 5000 });
-    const options = await page.$$(optionSelector);
-    for (const opt of options) {
-      const text = await page.evaluate(el => el.textContent.trim(), opt);
-      if (text.toLowerCase().includes(String(label).toLowerCase())) {
-        await opt.click();
-        return;
-      }
-    }
-  } catch (e) {
-    logger.warn(`Gagal pilih dropdown ${selector} -> ${label}:`, e.message);
-  }
+  await sleep(1000);
 }
 
 async function downloadRemoteFile(page, url, destPath) {
@@ -744,37 +602,80 @@ async function downloadRemoteFile(page, url, destPath) {
   await fs.writeFile(destPath, Buffer.from(base64Data, 'base64'));
 }
 
-async function generateVideoOnPage(account, params, taskId) {
+/* ===================================================================
+   MODE 1: DIRECT API ENGINE (ULTRA RINGAN UNTUK 100+ USER)
+=================================================================== */
+async function generateViaDirectApi(type, account, params, taskId) {
+  emitLog(`[${account.email}] ⚡ Menjalankan Direct API (${type.toUpperCase()})...`);
+  emitProgress(taskId, { status: 'processing', progress: 25 });
+
+  const session = await AccountManager.loadSession(account.id);
+  const token = (session && session.bearerToken) || account.bearerToken;
+
+  if (!token) {
+    emitLog(`[${account.email}] ⚠️ Bearer token tidak ditemukan, beralih ke Mode Browser...`);
+    return type === 'video' ? generateVideoOnPage(account, params, taskId) : generateImageOnPage(account, params, taskId);
+  }
+
+  const effectiveProxy = await getEffectiveProxy(account);
+  const axiosConfig = {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    },
+    timeout: 30000
+  };
+
+  try {
+    const endpoint = type === 'video' ? 'https://snapgen.ai/api/v1/video/create' : 'https://snapgen.ai/api/v1/image/create';
+    const payload = { ...params };
+    const res = await axios.post(endpoint, payload, axiosConfig);
+
+    if (res.data && (res.data.mediaUrl || res.data.url)) {
+      const remoteUrl = res.data.mediaUrl || res.data.url;
+      const ext = type === 'video' ? 'mp4' : 'png';
+      const fileName = `${type}_${taskId}.${ext}`;
+      const localPath = path.join(DOWNLOADS_DIR, fileName);
+
+      const dl = await axios.get(remoteUrl, { responseType: 'arraybuffer' });
+      await fs.writeFile(localPath, dl.data);
+
+      emitLog(`[${account.email}] 🎉 Direct API Sukses!`);
+      return { mediaUrl: `/downloads/${fileName}`, previewUrl: remoteUrl };
+    }
+  } catch (apiErr) {
+    emitLog(`[${account.email}] ℹ️ Direct API butuh otentikasi browser. Mengalihkan ke Browser CCTV...`);
+  }
+
+  // Fallback otomatis ke browser jika API butuh sinkronisasi DOM
+  return type === 'video' ? generateVideoOnPage(account, params, taskId) : generateImageOnPage(account, params, taskId);
+}
+
+/* ===================================================================
+   MODE 2: PUPPETEER BROWSER ENGINE (ADA CCTV LIVE VIEW)
+=================================================================== */
+const IMAGE_GEN_URL = 'https://snapgen.ai/app/imagen';
+const VIDEO_GEN_URL = 'https://snapgen.ai/app/video-gen/veo';
+
+async function generateImageOnPage(account, params, taskId) {
   const browser = await launchBrowserForAccount(account);
   const page = await newPageWithProxyAuth(browser, account);
 
-  // === FITUR BARU: LIVE VIEW STREAMING ===
   const streamLive = async () => {
-    while(!page.isClosed()) {
+    while (!page.isClosed()) {
       try {
         const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 20 });
-        if(ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
+        if (ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
         await sleep(1500);
-      } catch(e) { break; }
+      } catch (e) { break; }
     }
   };
 
   await restoreSessionToPage(page, account);
-  await page.goto(VIDEO_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-  
-  streamLive(); // Mulai siaran langsung!
+  await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  streamLive();
   emitProgress(taskId, { status: 'queued', progress: 5 });
-
-  emitLog(`[${account.email}] Menutup pop-up (jika ada)...`);
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const closeBtns = btns.filter(b => {
-      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return t.includes('got it') || t.includes('close') || t.includes('ok');
-    });
-    closeBtns.forEach(b => b.click());
-  }).catch(() => {});
-  await sleep(1000);
 
   emitLog(`[${account.email}] Memilih Provider & Model...`);
   const clickText = async (txt) => {
@@ -785,97 +686,48 @@ async function generateVideoOnPage(account, params, taskId) {
       if (target) target.click();
     }, txt);
   };
-  
+
   await clickText(params.provider);
   await sleep(500);
   await clickText(params.model);
-  await sleep(1500);
+  await sleep(1000);
 
   await clearOverlaysAndCheckboxes(page, account.email);
 
-  emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
-  const promptSelector = 'textarea[placeholder*="video" i]';
+  emitLog(`[${account.email}] Mengetik prompt...`);
+  const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
-
   await page.click(promptSelector, { clickCount: 3 });
-  await sleep(300);
   await page.keyboard.press('Backspace');
-  await sleep(300);
   await page.type(promptSelector, params.prompt, { delay: 40 });
   await page.keyboard.press('Space');
   await sleep(1000);
 
-  emitLog(`[${account.email}] Memilih orientasi, resolusi & durasi...`);
   const clickAria = async (lbl) => {
     if (!lbl) return;
     const btn = await page.$(`button[aria-label="${lbl}"]`);
     if (btn) await btn.click().catch(() => {});
   };
 
-  await clickAria(params.orientation); 
+  await clickAria(params.aspect_ratio);
   await clickAria(params.resolution);
-  await clickAria(String(params.duration));
 
   if (params.imageReference && params.imageReference.localPath) {
     const fileInputs = await page.$$('input[type="file"]');
-    if (fileInputs.length > 0) {
-      await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
-    }
+    if (fileInputs.length > 0) await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
   }
 
   await clearOverlaysAndCheckboxes(page, account.email);
+  emitProgress(taskId, { status: 'processing', progress: 20 });
 
-  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
-  if (autoSolve && capKey) {
-    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
-  }
+  const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  emitProgress(taskId, { status: 'processing', progress: 15 });
-  
-  const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
-
-  await clearOverlaysAndCheckboxes(page, account.email);
-
-  emitLog(`[${account.email}] Memastikan centang kotak kuning policy...`);
-  const policyCoords = await page.evaluate(() => {
-    const els = Array.from(document.querySelectorAll('label, p, div, span'));
-    const target = els.find(e => e.innerText && e.innerText.toLowerCase().includes('i understand that intentionally'));
-    if (!target) return null;
-    
-    const checkbox = target.parentElement?.querySelector('[role="checkbox"]') || target.parentElement?.querySelector('input[type="checkbox"]');
-    if (checkbox) {
-       const rect = checkbox.getBoundingClientRect();
-       if(rect.width > 0 && rect.height > 0) return { x: rect.x + (rect.width/2), y: rect.y + (rect.height/2) };
-    }
-    
-    const rect = target.getBoundingClientRect();
-    return { x: rect.x + 10, y: rect.y + 10 };
-  });
-
-  if (policyCoords) {
-    await page.mouse.move(policyCoords.x, policyCoords.y);
-    await sleep(200);
-    await page.mouse.down();
-    await sleep(100);
-    await page.mouse.up();
-    await sleep(1000);
-  }
-
-  emitLog(`[${account.email}] Menekan tombol ESC untuk menghancurkan Pop-up dadakan...`);
-  await page.keyboard.press('Escape');
-  await sleep(500);
-  await page.keyboard.press('Escape');
-  await sleep(1000);
-
-  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
-  
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
   const btnBox = await page.evaluate(() => {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      const isGen = txt.includes('generate');
-      const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
-      return isGen && !isLocked;
+      const txt = (b.innerText || '').toLowerCase();
+      return txt.includes('generate') && !b.disabled && b.getAttribute('aria-disabled') !== 'true';
     });
     if (!target) return null;
     target.scrollIntoView({ block: 'center' });
@@ -883,61 +735,44 @@ async function generateVideoOnPage(account, params, taskId) {
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
   });
 
-  if (!btnBox) {
-    emitLog(`[ERROR] Tombol Generate tetap terkunci / tidak ketemu!`);
-    await captureDebugSnapshot(page, account, `BTN-LOCKED-VID`);
-    throw new Error(`Tombol Generate masih terkunci. Cek: ${ENV.BASE_URL}/debug/BTN-LOCKED-VID.png`);
+  if (btnBox) {
+    await page.mouse.click(btnBox.x, btnBox.y);
+  } else {
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('button')).find(x => (x.innerText || '').toLowerCase().includes('generate'));
+      if (b) b.click();
+    }).catch(() => {});
   }
 
-  await page.mouse.move(btnBox.x, btnBox.y);
-  await sleep(300);
-  await page.mouse.down();
-  await sleep(100);
-  await page.mouse.up();
-  
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return txt.includes('generate') && !b.disabled;
-    });
-    if (target) target.click();
-  }).catch(() => {});
+  let progress = 20, completed = false, resultUrl = null;
 
-  let progress = 15, completed = false, resultUrl = null;
+  for (let i = 0; i < 60; i++) {
+    await sleep(3000);
 
-  for (let i = 0; i < 120; i++) {
-    await sleep(5000);
-
-    if (i === 10) {
-       emitLog(`[${account.email}] Cek CCTV Layar...`);
-       await captureDebugSnapshot(page, account, `STUCK-AT-15`);
-       emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-15.png`);
-    }
-    await page.evaluate(() => {
-      const b = Array.from(document.querySelectorAll('button')).find(x => (x.innerText || '').toLowerCase().includes('generate') && !x.disabled && x.getAttribute('aria-disabled') !== 'true');
-      if (b) { b.click(); }
-    }).catch(() => {});
+    // RADAR AKTIF: Tembak kotak Cloudflare jika muncul di tengah antrean
+    await solveTurnstileWidget(page, account.email);
 
     const pct = await page.evaluate(() => {
-       const match = document.body.innerText.match(/(\d+)%/);
-       return match ? parseInt(match[1]) : null;
+      const match = document.body.innerText.match(/(\d+)%/);
+      return match ? parseInt(match[1]) : null;
     });
     if (pct && pct > progress) progress = pct;
 
-    const currentVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
-    const newVideo = currentVideos.find(src => 
-      src && 
-      !existingVideos.includes(src) && 
+    const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
+    const newImage = currentImages.find(src =>
+      src &&
+      !existingImages.includes(src) &&
       !src.startsWith('data:') &&
+      !src.includes('avatar') &&
+      !src.includes('logo') &&
       src.includes('blob')
     );
 
-    if (newVideo) {
-      resultUrl = newVideo;
+    if (newImage) {
+      resultUrl = newImage;
       completed = true;
       progress = 100;
-      emitLog(`[${account.email}] 🎉 HASIL VIDEO ASLI DITEMUKAN!`);
+      emitLog(`[${account.email}] 🎉 HASIL AI DITEMUKAN!`);
     }
 
     emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
@@ -945,9 +780,114 @@ async function generateVideoOnPage(account, params, taskId) {
   }
 
   if (!completed || !resultUrl) {
-    await captureDebugSnapshot(page, account, `FAILED-GENERATE-VID`);
+    await captureDebugSnapshot(page, account, `FAILED-IMG`);
     await page.close().catch(() => {});
-    throw new Error(`Gagal dapat hasil asli. Cek foto: ${ENV.BASE_URL}/debug/${account.id}_FAILED-GENERATE-VID.png`);
+    throw new Error(`Gagal mendapatkan gambar. Cek foto debug di dashboard.`);
+  }
+
+  const fileName = `image_${taskId}.png`;
+  const localPath = path.join(DOWNLOADS_DIR, fileName);
+  await downloadRemoteFile(page, resultUrl, localPath);
+  await page.close().catch(() => {});
+
+  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
+}
+
+async function generateVideoOnPage(account, params, taskId) {
+  const browser = await launchBrowserForAccount(account);
+  const page = await newPageWithProxyAuth(browser, account);
+
+  const streamLive = async () => {
+    while (!page.isClosed()) {
+      try {
+        const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 20 });
+        if (ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
+        await sleep(1500);
+      } catch (e) { break; }
+    }
+  };
+
+  await restoreSessionToPage(page, account);
+  await page.goto(VIDEO_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  streamLive();
+  emitProgress(taskId, { status: 'queued', progress: 5 });
+
+  const clickText = async (txt) => {
+    if (!txt) return;
+    await page.evaluate((textToFind) => {
+      const els = Array.from(document.querySelectorAll('button, [role="combobox"], [role="option"], [role="tab"]'));
+      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0]));
+      if (target) target.click();
+    }, txt);
+  };
+
+  await clickText(params.provider);
+  await sleep(500);
+  await clickText(params.model);
+  await sleep(1000);
+
+  await clearOverlaysAndCheckboxes(page, account.email);
+
+  const promptSelector = 'textarea[placeholder*="video" i]';
+  await page.waitForSelector(promptSelector, { timeout: 30000 });
+  await page.click(promptSelector, { clickCount: 3 });
+  await page.keyboard.press('Backspace');
+  await page.type(promptSelector, params.prompt, { delay: 40 });
+  await page.keyboard.press('Space');
+  await sleep(1000);
+
+  const clickAria = async (lbl) => {
+    if (!lbl) return;
+    const btn = await page.$(`button[aria-label="${lbl}"]`);
+    if (btn) await btn.click().catch(() => {});
+  };
+
+  await clickAria(params.orientation);
+  await clickAria(params.resolution);
+  await clickAria(String(params.duration));
+
+  await clearOverlaysAndCheckboxes(page, account.email);
+  emitProgress(taskId, { status: 'processing', progress: 15 });
+
+  const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
+
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO!`);
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find(b => (b.innerText || '').toLowerCase().includes('generate') && !b.disabled);
+    if (target) target.click();
+  }).catch(() => {});
+
+  let progress = 15, completed = false, resultUrl = null;
+
+  for (let i = 0; i < 120; i++) {
+    await sleep(5000);
+    await solveTurnstileWidget(page, account.email);
+
+    const pct = await page.evaluate(() => {
+      const match = document.body.innerText.match(/(\d+)%/);
+      return match ? parseInt(match[1]) : null;
+    });
+    if (pct && pct > progress) progress = pct;
+
+    const currentVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
+    const newVideo = currentVideos.find(src => src && !existingVideos.includes(src) && src.includes('blob'));
+
+    if (newVideo) {
+      resultUrl = newVideo;
+      completed = true;
+      progress = 100;
+      emitLog(`[${account.email}] 🎉 HASIL VIDEO DITEMUKAN!`);
+    }
+
+    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
+    if (completed) break;
+  }
+
+  if (!completed || !resultUrl) {
+    await captureDebugSnapshot(page, account, `FAILED-VID`);
+    await page.close().catch(() => {});
+    throw new Error(`Gagal mendapatkan video.`);
   }
 
   const fileName = `video_${taskId}.mp4`;
@@ -959,272 +899,8 @@ async function generateVideoOnPage(account, params, taskId) {
 }
 
 /* ===================================================================
-   IMAGE GENERATION FLOW
+   HEALTH CHECK
 =================================================================== */
-const IMAGE_GEN_URL = 'https://snapgen.ai/app/imagen';
-
-async function generateImageOnPage(account, params, taskId) {
-  const browser = await launchBrowserForAccount(account);
-  const page = await newPageWithProxyAuth(browser, account);
-
-  // === FITUR BARU: LIVE VIEW STREAMING ===
-  const streamLive = async () => {
-    while(!page.isClosed()) {
-      try {
-        const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 20 });
-        if(ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
-        await sleep(1500); // Kirim foto setiap 1.5 detik (Hemat RAM)
-      } catch(e) { break; }
-    }
-  };
-
-  await restoreSessionToPage(page, account);
-  await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-  
-  streamLive(); // Mulai siaran langsung!
-  emitProgress(taskId, { status: 'queued', progress: 5 });
-
-  emitLog(`[${account.email}] Menutup pop-up (jika ada)...`);
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const closeBtns = btns.filter(b => {
-      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return t.includes('got it') || t.includes('close') || t.includes('ok');
-    });
-    closeBtns.forEach(b => b.click());
-  }).catch(() => {});
-  await sleep(1000);
-
-  emitLog(`[${account.email}] Memilih Provider & Model...`);
-  const clickText = async (txt) => {
-    if (!txt) return;
-    await page.evaluate((textToFind) => {
-      const els = Array.from(document.querySelectorAll('button, [role="combobox"], [role="option"], [role="tab"]'));
-      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0]));
-      if (target) target.click();
-    }, txt);
-  };
-  
-  await clickText(params.provider);
-  await sleep(500);
-  await clickText(params.model);
-  await sleep(1500);
-
-  await clearOverlaysAndCheckboxes(page, account.email);
-
-  emitLog(`[${account.email}] Mengetik prompt (Metode Ketik Manual)...`);
-  const promptSelector = 'textarea[placeholder*="image" i]';
-  await page.waitForSelector(promptSelector, { timeout: 30000 });
-
-  // KLIK 3X LALU KETIK (Trik Paling Ampuh Tembus Keamanan React)
-  await page.click(promptSelector, { clickCount: 3 });
-  await sleep(300);
-  await page.keyboard.press('Backspace');
-  await sleep(300);
-  await page.type(promptSelector, params.prompt, { delay: 40 });
-  await page.keyboard.press('Space');
-  await sleep(1000);
-
-  emitLog(`[${account.email}] Memilih rasio & resolusi...`);
-  const clickAria = async (lbl) => {
-    if (!lbl) return;
-    const btn = await page.$(`button[aria-label="${lbl}"]`);
-    if (btn) await btn.click().catch(() => {});
-  };
-
-  await clickAria(params.aspect_ratio); 
-  await clickAria(params.resolution);   
-
-  if (params.imageReference && params.imageReference.localPath) {
-    const fileInputs = await page.$$('input[type="file"]');
-    if (fileInputs.length > 0) {
-      await fileInputs[0].uploadFile(params.imageReference.localPath).catch(() => {});
-    }
-  }
-
-  await clearOverlaysAndCheckboxes(page, account.email);
-
-  const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
-  if (autoSolve && capKey) {
-    await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
-  }
-
-  emitProgress(taskId, { status: 'processing', progress: 20 });
-  
-  const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
-
-  await clearOverlaysAndCheckboxes(page, account.email);
-
-  emitLog(`[${account.email}] Memastikan centang kotak kuning policy...`);
-  const policyCoordsImg = await page.evaluate(() => {
-    const els = Array.from(document.querySelectorAll('label, p, div, span'));
-    const target = els.find(e => e.innerText && e.innerText.toLowerCase().includes('i understand that intentionally'));
-    if (!target) return null;
-    
-    const checkbox = target.parentElement?.querySelector('[role="checkbox"]') || target.parentElement?.querySelector('input[type="checkbox"]');
-    if (checkbox) {
-       const rect = checkbox.getBoundingClientRect();
-       if(rect.width > 0 && rect.height > 0) return { x: rect.x + (rect.width/2), y: rect.y + (rect.height/2) };
-    }
-    
-    const rect = target.getBoundingClientRect();
-    return { x: rect.x + 10, y: rect.y + 10 };
-  });
-
-  if (policyCoordsImg) {
-    await page.mouse.move(policyCoordsImg.x, policyCoordsImg.y);
-    await sleep(200);
-    await page.mouse.down();
-    await sleep(100);
-    await page.mouse.up();
-    await sleep(1000);
-  }
-
-  emitLog(`[${account.email}] Menekan tombol ESC untuk menghancurkan Pop-up dadakan...`);
-  await page.keyboard.press('Escape');
-  await sleep(500);
-  await page.keyboard.press('Escape');
-  await sleep(1000);
-
-  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
-  
-  const btnBox = await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      const isGen = txt.includes('generate');
-      const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
-      return isGen && !isLocked;
-    });
-    if (!target) return null;
-    target.scrollIntoView({ block: 'center' });
-    const rect = target.getBoundingClientRect();
-    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
-  });
-
-  if (!btnBox) {
-    emitLog(`[ERROR] Tombol Generate tetap terkunci / tidak ketemu!`);
-    await captureDebugSnapshot(page, account, `BTN-LOCKED`);
-    throw new Error(`Tombol Generate masih terkunci. Cek: ${ENV.BASE_URL}/debug/BTN-LOCKED.png`);
-  }
-
-  await page.mouse.move(btnBox.x, btnBox.y);
-  await sleep(300);
-  await page.mouse.down();
-  await sleep(100);
-  await page.mouse.up();
-  
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const target = btns.find(b => {
-      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return txt.includes('generate') && !b.disabled;
-    });
-    if (target) target.click();
-  }).catch(() => {});
-
-  let progress = 20, completed = false, resultUrl = null;
-
-  for (let i = 0; i < 60; i++) {
-    await sleep(3000);
-
-    // 1. Radar Deteksi & Klik Kotak Cloudflare Turnstile
-    try {
-      const cfCoords = await page.evaluate(() => {
-        const iframes = Array.from(document.querySelectorAll('iframe'));
-        for (const ifr of iframes) {
-          const src = ifr.src || '';
-          const title = ifr.title || '';
-          if (src.includes('cloudflare') || src.includes('challenge') || src.includes('turnstile') || title.toLowerCase().includes('cloudflare')) {
-            const rect = ifr.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              return { x: rect.left + 30, y: rect.top + (rect.height / 2) };
-            }
-          }
-        }
-        const allDivs = Array.from(document.querySelectorAll('div, section, [role="dialog"]'));
-        const modal = allDivs.find(d => d.innerText && d.innerText.includes("Please verify you're human"));
-        if (modal) {
-          const ifr = modal.querySelector('iframe');
-          if (ifr) {
-            const rect = ifr.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              return { x: rect.left + 30, y: rect.top + (rect.height / 2) };
-            }
-          }
-        }
-        return null;
-      });
-
-      if (cfCoords) {
-        emitLog(`[${account.email}] 🛡️ Cloudflare muncul! Mengklik kotak verifikasi di (${Math.round(cfCoords.x)}, ${Math.round(cfCoords.y)})...`);
-        await page.mouse.move(cfCoords.x, cfCoords.y);
-        await sleep(200);
-        await page.mouse.down();
-        await sleep(150);
-        await page.mouse.up();
-        await sleep(2000);
-      }
-    } catch (err) {}
-
-    // 2. Cek apakah terblokir paywall premium
-    const isPremiumBlocked = await page.evaluate(() => {
-       const text = document.body.innerText.toLowerCase();
-       return text.includes('premium plan required') || text.includes('upgrade to premium');
-    });
-    if (isPremiumBlocked) {
-       emitLog(`[${account.email}] ❌ TERBLOKIR: Resolusi/Model ini butuh akun Premium!`);
-       await captureDebugSnapshot(page, account, `PREMIUM-BLOCKED-IMG`);
-       throw new Error(`Terblokir Paywall: Resolusi atau Model yang Anda pilih membutuhkan akun Premium di SnapGen. Silakan turunkan resolusi.`);
-    }
-
-    const pct = await page.evaluate(() => {
-       const match = document.body.innerText.match(/(\d+)%/);
-       return match ? parseInt(match[1]) : null;
-    });
-    if (pct && pct > progress) progress = pct;
-
-    const currentImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
-    const newImage = currentImages.find(src => 
-      src && 
-      !existingImages.includes(src) && 
-      !src.startsWith('data:') && 
-      !src.includes('avatar') && 
-      !src.includes('logo') &&
-      src.includes('blob')
-    );
-
-    if (newImage) {
-      resultUrl = newImage;
-      completed = true;
-      progress = 100;
-      emitLog(`[${account.email}] 🎉 HASIL AI ASLI DITEMUKAN!`);
-    }
-
-    emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
-    if (completed) break;
-  }
-
-  if (!completed || !resultUrl) {
-    await captureDebugSnapshot(page, account, `FAILED-GENERATE-IMG`);
-    await page.close().catch(() => {});
-    throw new Error(`Gagal dapat hasil asli. Cek foto: ${ENV.BASE_URL}/debug/${account.id}_FAILED-GENERATE-IMG.png`);
-  }
-
-  const ext = resultUrl.includes('.png') ? 'png' : 'jpg';
-  const fileName = `image_${taskId}.${ext}`;
-  const localPath = path.join(DOWNLOADS_DIR, fileName);
-  await downloadRemoteFile(page, resultUrl, localPath);
-  await page.close().catch(() => {});
-
-  return { mediaUrl: `/downloads/${fileName}`, previewUrl: resultUrl };
-}
-
-/* ===================================================================
-   HEALTH CHECK / KEEP-ALIVE
-=================================================================== */
-const DASHBOARD_HOME_URL = 'https://snapgen.ai/app';
-
 async function checkAccountHealth(account) {
   try {
     const browser = await launchBrowserForAccount(account);
@@ -1233,74 +909,36 @@ async function checkAccountHealth(account) {
     const proxyAlive = await checkProxyAlive(page);
     await AccountManager.update(account.id, { statusProxy: proxyAlive ? 'online' : 'offline' });
 
-    if (!proxyAlive) {
-      await page.close().catch(() => {});
-      emitAccountUpdate(await AccountManager.getById(account.id));
-      return;
-    }
-
     const restored = await restoreSessionToPage(page, account);
     if (!restored) {
-      await AccountManager.update(account.id, { statusCookie: 'expired' });
-      emitAccountUpdate(await AccountManager.getById(account.id));
       await page.close().catch(() => {});
-      emitLog(`[${account.email}] Sesi tidak ditemukan, menjalankan auto-login...`);
-      return autoLogin(account).catch(err => emitLog(`[${account.email}] Auto-login gagal: ${err.message}`));
+      return autoLogin(account);
     }
 
-    await page.goto(DASHBOARD_HOME_URL, { waitUntil: 'networkidle2', timeout: 30000 });
+    await page.goto('https://snapgen.ai/app', { waitUntil: 'networkidle2', timeout: 30000 });
     const isLoggedIn = !page.url().includes('/login');
 
     if (!isLoggedIn) {
-      await AccountManager.update(account.id, { statusCookie: 'expired' });
-      emitAccountUpdate(await AccountManager.getById(account.id));
       await page.close().catch(() => {});
-      emitLog(`[${account.email}] Sesi expired, menjalankan auto-login ulang...`);
-      return autoLogin(account).catch(err => emitLog(`[${account.email}] Auto-login gagal: ${err.message}`));
+      return autoLogin(account);
     }
 
     await AccountManager.update(account.id, { statusCookie: 'active', lastCheck: new Date().toISOString() });
-
-    // Ambil kredit langsung dari localStorage authStore (data asli snapgen.ai, lebih akurat dari DOM scraping)
-    const creditInfo = await page.evaluate(() => {
-      try {
-        const raw = localStorage.getItem('authStore');
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        return (parsed.user && parsed.user.user_credit) ? parsed.user.user_credit : null;
-      } catch (e) {
-        return null;
-      }
-    }).catch(() => null);
-
-    if (creditInfo) {
-      await AccountManager.update(account.id, {
-        creditsLeft: creditInfo.available_credit || 0,
-        isUnlimited: false
-      });
-      emitLog(`[${account.email}] Kredit terbaru: ${creditInfo.available_credit}`);
-    }
-
     emitAccountUpdate(await AccountManager.getById(account.id));
     await page.close().catch(() => {});
-  } catch (err) {
-    logger.error(`Health check gagal untuk ${account.email}:`, err.message);
-  }
+  } catch (err) {}
 }
 
 async function runHealthCheckAll() {
   const accounts = await AccountManager.getAll();
-  logger.info(`Menjalankan health check untuk ${accounts.length} akun...`);
-  for (const acc of accounts) {
-    await checkAccountHealth(acc);
-  }
+  for (const acc of accounts) await checkAccountHealth(acc);
   const refreshed = await AccountManager.getAll();
   const anyActive = refreshed.some(a => a.statusCookie === 'active');
   emitHealthStatus({ videoGen: anyActive, imageGen: anyActive });
 }
 
 /* ===================================================================
-   QUEUE MANAGER (p-queue) + ESTIMASI BIAYA + ROTASI AKUN
+   QUEUE MANAGER
 =================================================================== */
 const genQueue = new PQueue({ concurrency: ENV.QUEUE_CONCURRENCY });
 
@@ -1311,12 +949,7 @@ function estimateCost(type, params) {
     if (parseInt(params.duration) >= 15) base += 4;
     return base;
   }
-  if (type === 'image') {
-    let base = 2;
-    if (params.resolution === '4K') base += 2;
-    return base;
-  }
-  return 1;
+  return params.resolution === '4K' ? 4 : 2;
 }
 
 async function upsertTask(taskId, patch) {
@@ -1337,16 +970,15 @@ async function incrementStat(key) {
 async function enqueueGenerationJob(type, params, source = 'api') {
   const cost = estimateCost(type, params);
   const taskId = genTaskId(type.toUpperCase());
+  const engineMode = params.engineMode || 'browser';
 
-  await upsertTask(taskId, { taskId, type, status: 'queued', cost, source, createdAt: new Date().toISOString() });
+  await upsertTask(taskId, { taskId, type, status: 'queued', cost, source, engineMode, createdAt: new Date().toISOString() });
 
   genQueue.add(async () => {
     try {
       const account = await AccountManager.getOptimalAccount(cost);
       if (!account) {
-        const allAcc = await AccountManager.getAll();
-        const debugInfo = allAcc.map(a => `${a.email}(cookie:${a.statusCookie},proxy:${a.statusProxy},credit:${a.creditsLeft})`).join(' | ');
-        const errMsg = `Tidak ada akun tersedia untuk cost ${cost}. Detail: ${debugInfo}`;
+        const errMsg = `Tidak ada akun aktif yang mencukupi untuk biaya ${cost} kredit.`;
         await upsertTask(taskId, { status: 'failed', error: errMsg });
         emitProgress(taskId, { status: 'failed', progress: 0, error: errMsg });
         return;
@@ -1355,13 +987,13 @@ async function enqueueGenerationJob(type, params, source = 'api') {
       await upsertTask(taskId, { status: 'processing', accountId: account.id });
 
       let result;
-      if (type === 'video') {
-        result = await generateVideoOnPage(account, params, taskId);
-        await incrementStat(source === 'dashboard' ? 'videoFromDashboard' : 'videoFromApi');
+      if (engineMode === 'direct_api') {
+        result = await generateViaDirectApi(type, account, params, taskId);
       } else {
-        result = await generateImageOnPage(account, params, taskId);
-        await incrementStat(source === 'dashboard' ? 'imageFromDashboard' : 'imageFromApi');
+        result = type === 'video' ? await generateVideoOnPage(account, params, taskId) : await generateImageOnPage(account, params, taskId);
       }
+
+      await incrementStat(type === 'video' ? (source === 'dashboard' ? 'videoFromDashboard' : 'videoFromApi') : (source === 'dashboard' ? 'imageFromDashboard' : 'imageFromApi'));
 
       if (!account.isUnlimited) {
         await AccountManager.update(account.id, { creditsLeft: Math.max(0, account.creditsLeft - cost) });
@@ -1376,24 +1008,10 @@ async function enqueueGenerationJob(type, params, source = 'api') {
       });
 
       emitProgress(taskId, { status: 'completed', progress: 100, mediaUrl: result.mediaUrl });
-
       if (params.webhookUrl) {
         axios.post(params.webhookUrl, { taskId, status: 'completed', mediaUrl: `${ENV.BASE_URL}${result.mediaUrl}` }).catch(() => {});
       }
     } catch (err) {
-      logger.error(`Job ${taskId} gagal:`, err.message);
-      try {
-        const tasks = await dbRead('tasks', []);
-        const t = tasks.find(x => x.taskId === taskId);
-        if (t && t.accountId && activeBrowsers.has(t.accountId)) {
-          const b = activeBrowsers.get(t.accountId);
-          await b.close();
-          activeBrowsers.delete(t.accountId);
-          emitLog(`[SYSTEM] Browser direstart paksa untuk membersihkan antrean yang tersangkut.`);
-        }
-      } catch (cleanupErr) {
-         // Abaikan error cleanup
-      }
       await upsertTask(taskId, { status: 'failed', error: err.message });
       emitProgress(taskId, { status: 'failed', progress: 0, error: err.message });
     }
@@ -1408,7 +1026,7 @@ async function getTaskStatus(taskId) {
 }
 
 /* ===================================================================
-   EXPRESS APP SETUP
+   EXPRESS SERVER SETUP & ROUTES
 =================================================================== */
 const app = express();
 const server = http.createServer(app);
@@ -1425,11 +1043,7 @@ app.use(session({
   secret: ENV.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: {
-    maxAge: 24 * 60 * 60 * 1000,
-    secure: ENV.NODE_ENV === 'production',
-    sameSite: 'lax'
-  }
+  cookie: { maxAge: 24 * 60 * 60 * 1000, secure: ENV.NODE_ENV === 'production', sameSite: 'lax' }
 }));
 
 app.use(express.static(path.join(__dirname, 'public')));
@@ -1437,7 +1051,6 @@ app.use('/downloads', express.static(DOWNLOADS_DIR));
 app.use('/uploads', express.static(UPLOADS_DIR));
 app.use('/debug', express.static(DEBUG_DIR));
 
-// Multer untuk upload image reference
 const upload = multer({
   storage: multer.diskStorage({
     destination: (req, file, cb) => cb(null, UPLOADS_DIR),
@@ -1446,12 +1059,9 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024 }
 });
 
-/* ===================================================================
-   MIDDLEWARE AUTH
-=================================================================== */
 function requireAdminAuth(req, res, next) {
   if (req.session && req.session.isAdmin) return next();
-  return res.status(401).json({ success: false, message: 'Unauthorized, silakan login kembali' });
+  return res.status(401).json({ success: false, message: 'Unauthorized' });
 }
 
 function requirePublicApiKey(req, res, next) {
@@ -1460,16 +1070,14 @@ function requirePublicApiKey(req, res, next) {
   return res.status(401).json({ success: false, message: 'Invalid API Key' });
 }
 
-/* ===================================================================
-   ADMIN AUTH ROUTES (TIDAK BUTUH SESSION)
-=================================================================== */
+/* AUTH ROUTES */
 app.post('/api/admin/login', (req, res) => {
   const { username, password } = req.body || {};
   if (username === ENV.ADMIN_USERNAME && password === ENV.ADMIN_PASSWORD) {
     req.session.isAdmin = true;
     return res.json({ success: true });
   }
-  res.status(401).json({ success: false, message: 'Username atau password salah' });
+  res.status(401).json({ success: false, message: 'Password salah' });
 });
 
 app.post('/api/admin/logout', (req, res) => {
@@ -1481,28 +1089,21 @@ app.get('/api/admin/check-session', (req, res) => {
   res.json({ loggedIn: !!(req.session && req.session.isAdmin) });
 });
 
-/* ===================================================================
-   ADMIN API ROUTES (BUTUH SESSION)
-=================================================================== */
+/* ADMIN ROUTER */
 const adminRouter = express.Router();
 adminRouter.use(requireAdminAuth);
 
-// ---- ACCOUNTS ----
 adminRouter.get('/accounts', async (req, res) => {
   const accounts = await AccountManager.getAll();
-  const sanitized = accounts.map(({ password, ...rest }) => rest);
-  res.json({ success: true, data: sanitized });
+  res.json({ success: true, data: accounts.map(({ password, ...r }) => r) });
 });
 
 adminRouter.post('/accounts', async (req, res) => {
   const { email, password, proxy } = req.body || {};
-  if (!email || !password) return res.status(400).json({ success: false, message: 'Email & password wajib diisi' });
-
+  if (!email || !password) return res.status(400).json({ success: false, message: 'Wajib diisi' });
   const account = await AccountManager.create({ email, password, proxy });
   emitAccountUpdate(account);
-
-  autoLogin(account).catch(err => emitLog(`[${email}] Auto-login gagal: ${err.message}`));
-
+  autoLogin(account).catch(() => {});
   res.json({ success: true, data: account });
 });
 
@@ -1513,30 +1114,25 @@ adminRouter.delete('/accounts/:id', async (req, res) => {
 
 adminRouter.post('/accounts/:id/relogin', async (req, res) => {
   const account = await AccountManager.getById(req.params.id);
-  if (!account) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan' });
-
-  autoLogin(account).catch(err => emitLog(`[${account.email}] Re-login gagal: ${err.message}`));
-  res.json({ success: true, message: 'Re-login dijalankan di background' });
+  if (!account) return res.status(404).json({ success: false });
+  autoLogin(account).catch(() => {});
+  res.json({ success: true, message: 'Re-login berjalan di background' });
 });
 
 adminRouter.post('/accounts/:id/check-credits', async (req, res) => {
   const account = await AccountManager.getById(req.params.id);
-  if (!account) return res.status(404).json({ success: false, message: 'Akun tidak ditemukan' });
-
-  checkAccountHealth(account).catch(err => emitLog(`Check credits error: ${err.message}`));
-  res.json({ success: true, message: 'Mengecek kredit di background' });
+  if (!account) return res.status(404).json({ success: false });
+  checkAccountHealth(account).catch(() => {});
+  res.json({ success: true, message: 'Mengecek kredit...' });
 });
 
 adminRouter.get('/accounts/:id/cookie', async (req, res) => {
   const session = await AccountManager.loadSession(req.params.id);
-  if (!session) return res.status(404).json({ success: false, message: 'Sesi/cookie tidak ditemukan' });
-  res.json({ success: true, data: session });
+  res.json({ success: true, data: session || {} });
 });
 
-// ---- SETTINGS ----
 adminRouter.get('/settings', async (req, res) => {
-  const settings = await dbRead('settings', {});
-  res.json({ success: true, data: settings });
+  res.json({ success: true, data: await dbRead('settings', {}) });
 });
 
 adminRouter.post('/settings', async (req, res) => {
@@ -1546,78 +1142,51 @@ adminRouter.post('/settings', async (req, res) => {
   res.json({ success: true, data: updated });
 });
 
-// ---- STATS ----
 adminRouter.get('/stats', async (req, res) => {
-  const stats = await dbRead('stats', {});
-  res.json({ success: true, data: stats });
+  res.json({ success: true, data: await dbRead('stats', {}) });
 });
 
-// ---- UPLOAD IMAGE REFERENCE ----
 adminRouter.post('/upload', upload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ success: false, message: 'File tidak ditemukan' });
-  res.json({
-    success: true,
-    url: `/uploads/${req.file.filename}`,
-    localPath: path.join(UPLOADS_DIR, req.file.filename)
-  });
+  if (!req.file) return res.status(400).json({ success: false });
+  res.json({ success: true, url: `/uploads/${req.file.filename}`, localPath: path.join(UPLOADS_DIR, req.file.filename) });
 });
 
-// ---- TEST KONEKSI & SALDO (PROXY & CAPTCHA) ----
 adminRouter.post('/debug/test-connection', async (req, res) => {
   try {
     const { captchaProvider, captchaApiKey, proxy } = req.body;
     let resultMsg = [];
 
-    // 1. Cek Saldo API Captcha
     if (captchaProvider !== 'none' && captchaApiKey) {
       try {
         if (captchaProvider === '2captcha' || captchaProvider === 'rucaptcha') {
           const r = await axios.get(`https://2captcha.com/res.php?key=${captchaApiKey}&action=getbalance&json=1`);
-          if (r.data.status === 1) { resultMsg.push(`✅ [${captchaProvider}] Status API Aktif! Saldo Sisa: $${r.data.request}`); }
-          else { resultMsg.push(`❌ [${captchaProvider}] Error: API Key Salah / Ditolak Server`); }
+          if (r.data.status === 1) resultMsg.push(`✅ [${captchaProvider}] Saldo: $${r.data.request}`);
         } else if (captchaProvider === 'capsolver') {
           const r = await axios.post('https://api.capsolver.com/getBalance', { clientKey: captchaApiKey });
-          if (r.data.errorId === 0) { resultMsg.push(`✅ [CapSolver] Status API Aktif! Saldo Sisa: $${r.data.balance}`); }
-          else { resultMsg.push(`❌ [CapSolver] Error: ${r.data.errorDescription}`); }
-        } else if (captchaProvider === 'anticaptcha') {
-          const r = await axios.post('https://api.anti-captcha.com/getBalance', { clientKey: captchaApiKey });
-          if (r.data.errorId === 0) { resultMsg.push(`✅ [Anti-Captcha] Status API Aktif! Saldo Sisa: $${r.data.balance}`); }
-          else { resultMsg.push(`❌ [Anti-Captcha] Error: ${r.data.errorDescription}`); }
-        } else {
-          resultMsg.push(`✅ [${captchaProvider}] API Key berhasil dideteksi sistem. (Cek saldo nominal khusus via web provider).`);
+          if (r.data.errorId === 0) resultMsg.push(`✅ [CapSolver] Saldo: $${r.data.balance}`);
         }
       } catch (e) {
-        resultMsg.push(`❌ [${captchaProvider}] Gagal menghubungi server provider. Periksa koneksi.`);
+        resultMsg.push(`❌ [Captcha] Gagal cek saldo.`);
       }
     } else {
       resultMsg.push(`ℹ️ [Captcha] Mode Tanpa API / Web Unlocker diaktifkan.`);
     }
 
-    // 2. Cek Koneksi Proxy (Mensimulasikan Browser Anti-Blokir)
     if (proxy && proxy.host && proxy.port) {
-      resultMsg.push(`ℹ️ [Proxy] Mengecek jalur koneksi melewati ${proxy.host}:${proxy.port}...`);
       try {
-        const browser = await puppeteer.launch({ 
-          headless: 'new', 
-          args: [
-            '--no-sandbox', '--disable-setuid-sandbox',
-            `--proxy-server=${proxy.type || 'http'}://${proxy.host}:${proxy.port}`,
-            '--ignore-certificate-errors', '--ignore-certificate-errors-spki-list'
-          ]
+        const browser = await puppeteer.launch({
+          headless: 'new',
+          args: ['--no-sandbox', `--proxy-server=${proxy.type || 'http'}://${proxy.host}:${proxy.port}`, '--ignore-certificate-errors']
         });
         const page = await browser.newPage();
-        if (proxy.username) { await page.authenticate({ username: proxy.username, password: proxy.password }); }
-        
-        const resp = await page.goto('https://api.ipify.org?format=json', { timeout: 20000, waitUntil: 'domcontentloaded' });
+        if (proxy.username) await page.authenticate({ username: proxy.username, password: proxy.password });
+        const resp = await page.goto('https://api.ipify.org?format=json', { timeout: 15000 });
         const ipData = await resp.json();
         await browser.close().catch(() => {});
-        
-        resultMsg.push(`✅ [Proxy] SUPER SUKSES! Internet menyala, IP Anda terdeteksi di-masking menjadi: ${ipData.ip}`);
+        resultMsg.push(`✅ [Proxy] SUPER SUKSES! IP Masking: ${ipData.ip}`);
       } catch (e) {
-        resultMsg.push(`❌ [Proxy] Gagal Terhubung! (Penyebab: Timeout, Proxy Mati, atau Username/Password Salah).`);
+        resultMsg.push(`❌ [Proxy] Gagal terhubung.`);
       }
-    } else {
-      resultMsg.push(`⚠️ [Proxy] Kolom Proxy Kosong, sistem akan memakai IP asli server VPS Anda.`);
     }
 
     res.json({ success: true, message: resultMsg.join('<br><br>') });
@@ -1626,193 +1195,116 @@ adminRouter.post('/debug/test-connection', async (req, res) => {
   }
 });
 
-// ---- DEBUGGER / UI EXTRACTOR (Untuk Update Web SnapGen) ----
 adminRouter.post('/debug/dump', async (req, res) => {
   try {
     const type = req.body.type || 'image';
     const account = await AccountManager.getOptimalAccount(1);
-    if (!account) return res.status(400).json({ success: false, message: 'Tidak ada akun aktif/berkredit' });
+    if (!account) return res.status(400).json({ success: false, message: 'Tidak ada akun aktif' });
 
     const browser = await launchBrowserForAccount(account);
     const page = await newPageWithProxyAuth(browser, account);
     await restoreSessionToPage(page, account);
-    
-    const targetUrl = type === 'video' ? VIDEO_GEN_URL : IMAGE_GEN_URL;
-    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
-    await sleep(5000);
 
+    await page.goto(type === 'video' ? VIDEO_GEN_URL : IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
     const dumpData = await page.evaluate(() => {
-      return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
-        tag: el.tagName, type: el.type || '', name: el.name || '',
-        id: el.id || '', className: el.className || '', placeholder: el.placeholder || '',
-        text: el.innerText ? el.innerText.substring(0, 100) : '', ariaLabel: el.getAttribute('aria-label') || ''
+      return Array.from(document.querySelectorAll('button, input, textarea, select')).map(el => ({
+        tag: el.tagName, type: el.type || '', name: el.name || '', text: (el.innerText || '').slice(0, 80)
       }));
     });
 
-    const fileName = `${account.id}_${type}gen-dump.json`;
-    const dumpPath = path.join(DEBUG_DIR, fileName);
-    await fs.writeJson(dumpPath, dumpData, { spaces: 2 });
+    const fileName = `${account.id}_${type}-dump.json`;
+    await fs.writeJson(path.join(DEBUG_DIR, fileName), dumpData, { spaces: 2 });
     await page.close().catch(() => {});
-    
     res.json({ success: true, url: `/debug/${fileName}` });
   } catch (err) {
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
-// ---- DIRECT GENERATE DARI DASHBOARD ----
 adminRouter.post('/generate/video', async (req, res) => {
-  emitLog('Menerima perintah Generate Video dari dashboard...');
   try {
     const body = req.body || {};
-    const params = {
+    const result = await enqueueGenerationJob('video', {
       provider: body.provider, model: body.model, prompt: body.prompt,
       imageReference: body.image_reference ? { localPath: body.image_reference_local, url: body.image_reference } : null,
       orientation: body.orientation, resolution: body.resolution,
-      duration: body.duration, audio: body.audio
-    };
-    const result = await enqueueGenerationJob('video', params, 'dashboard');
+      duration: body.duration, audio: body.audio, engineMode: body.engineMode || 'browser'
+    }, 'dashboard');
     res.json({ success: true, ...result });
   } catch (err) {
-    emitLog(`Gagal memproses request Video: ${err.message}`);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 adminRouter.post('/generate/image', async (req, res) => {
-  emitLog('Menerima perintah Generate Image dari dashboard...');
   try {
     const body = req.body || {};
-    const params = {
+    const result = await enqueueGenerationJob('image', {
       provider: body.provider, model: body.model, prompt: body.prompt,
       imageReference: body.image_reference ? { localPath: body.image_reference_local, url: body.image_reference } : null,
-      aspect_ratio: body.aspect_ratio, resolution: body.resolution
-    };
-    const result = await enqueueGenerationJob('image', params, 'dashboard');
+      aspect_ratio: body.aspect_ratio, resolution: body.resolution, engineMode: body.engineMode || 'browser'
+    }, 'dashboard');
     res.json({ success: true, ...result });
   } catch (err) {
-    emitLog(`Gagal memproses request Image: ${err.message}`);
     res.status(500).json({ success: false, message: err.message });
   }
 });
 
 adminRouter.get('/task/:taskId', async (req, res) => {
   const task = await getTaskStatus(req.params.taskId);
-  if (!task) return res.status(404).json({ success: false, message: 'Task tidak ditemukan' });
+  if (!task) return res.status(404).json({ success: false });
   res.json({ success: true, data: task });
 });
 
-// ---- GALLERY ----
 adminRouter.get('/gallery', async (req, res) => {
   const tasks = await dbRead('tasks', []);
-  const completed = tasks.filter(t => t.status === 'completed').reverse();
-  res.json({ success: true, data: completed });
+  res.json({ success: true, data: tasks.filter(t => t.status === 'completed').reverse() });
 });
 
 app.use('/api/admin', adminRouter);
 
-/* ===================================================================
-   PUBLIC API V1 (UNTUK INTEGRASI WEBSITE UTAMA)
-=================================================================== */
+/* PUBLIC API */
 const publicRouter = express.Router();
 publicRouter.use(requirePublicApiKey);
 
 publicRouter.post('/video/generate', async (req, res) => {
   try {
-    const { provider, model, prompt, image_reference, orientation, resolution, duration, audio, webhook_url } = req.body || {};
-    if (!provider || !model || !prompt) {
-      return res.status(400).json({ success: false, message: 'provider, model, prompt wajib diisi' });
-    }
-
-    const { taskId, cost } = await enqueueGenerationJob('video', {
-      provider, model, prompt,
-      imageReference: image_reference ? { url: image_reference } : null,
-      orientation, resolution, duration, audio,
-      webhookUrl: webhook_url
-    }, 'api');
-
-    res.json({ success: true, taskId, cost });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+    const b = req.body || {};
+    const r = await enqueueGenerationJob('video', { ...b, engineMode: b.engineMode || 'direct_api' }, 'api');
+    res.json({ success: true, ...r });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
 publicRouter.post('/image/generate', async (req, res) => {
   try {
-    const { provider, model, prompt, aspect_ratio, resolution, image_reference, webhook_url } = req.body || {};
-    if (!provider || !model || !prompt) {
-      return res.status(400).json({ success: false, message: 'provider, model, prompt wajib diisi' });
-    }
-
-    const { taskId, cost } = await enqueueGenerationJob('image', {
-      provider, model, prompt, aspect_ratio, resolution,
-      imageReference: image_reference ? { url: image_reference } : null,
-      webhookUrl: webhook_url
-    }, 'api');
-
-    res.json({ success: true, taskId, cost });
-  } catch (err) {
-    res.status(500).json({ success: false, message: err.message });
-  }
+    const b = req.body || {};
+    const r = await enqueueGenerationJob('image', { ...b, engineMode: b.engineMode || 'direct_api' }, 'api');
+    res.json({ success: true, ...r });
+  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
 });
 
 publicRouter.get('/task/status/:taskId', async (req, res) => {
   const task = await getTaskStatus(req.params.taskId);
-  if (!task) return res.status(404).json({ success: false, message: 'Task tidak ditemukan' });
-
-  if (task.status === 'completed') {
-    const accounts = await AccountManager.getAll();
-    const acc = accounts.find(a => a.id === task.accountId);
-    return res.json({
-      success: true,
-      status: 'completed',
-      type: task.type,
-      mediaUrl: `${ENV.BASE_URL}${task.mediaUrl}`,
-      previewUrl: task.previewUrl,
-      creditsLeft: acc ? (acc.isUnlimited ? 'Unlimited' : acc.creditsLeft) : null
-    });
-  }
-
-  res.json({ success: true, status: task.status, cost: task.cost, error: task.error || null });
+  if (!task) return res.status(404).json({ success: false });
+  res.json({ success: true, ...task });
 });
 
 app.use('/api/v1', publicRouter);
 
-/* ===================================================================
-   FALLBACK ROUTE -> SPA
-=================================================================== */
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-/* ===================================================================
-   CRON HEALTH CHECK (SETIAP 10 MENIT)
-=================================================================== */
-cron.schedule('*/10 * * * *', () => {
-  logger.info('[CRON] Menjalankan health check berkala...');
-  runHealthCheckAll().catch(err => logger.error('Health check cron error:', err.message));
-});
+cron.schedule('*/10 * * * *', () => { runHealthCheckAll().catch(() => {}); });
+setTimeout(() => { runHealthCheckAll().catch(() => {}); }, 8000);
 
-setTimeout(() => {
-  runHealthCheckAll().catch(err => logger.error('Initial health check error:', err.message));
-}, 8000);
-
-/* ===================================================================
-   GRACEFUL SHUTDOWN
-=================================================================== */
 process.on('SIGTERM', async () => {
-  logger.warn('SIGTERM diterima, menutup browser aktif...');
-  for (const [id, browser] of activeBrowsers.entries()) {
-    try { await browser.close(); } catch (e) {}
+  for (const [, b] of activeBrowsers.entries()) {
+    try { await b.close(); } catch (e) {}
   }
   process.exit(0);
 });
 
-/* ===================================================================
-   START SERVER
-=================================================================== */
 server.listen(ENV.PORT, () => {
-  logger.success(`🚀 SnapGen AI Wrapper berjalan di port ${ENV.PORT}`);
-  logger.info(`📊 Dashboard: ${ENV.BASE_URL}/`);
-  logger.info(`🔑 Admin: ${ENV.ADMIN_USERNAME} / (password dari ENV)`);
+  logger.success(`🚀 SnapGen Dual Hybrid Engine aktif di port ${ENV.PORT}`);
 });
