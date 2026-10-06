@@ -742,8 +742,21 @@ async function generateImageOnPage(account, params, taskId) {
   const browser = await launchBrowserForAccount(account);
   const page = await newPageWithProxyAuth(browser, account);
 
+  // === FITUR BARU: LIVE VIEW STREAMING ===
+  const streamLive = async () => {
+    while(!page.isClosed()) {
+      try {
+        const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 20 });
+        if(ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
+        await sleep(1500); // Kirim foto setiap 1.5 detik (Hemat RAM)
+      } catch(e) { break; }
+    }
+  };
+
   await restoreSessionToPage(page, account);
   await page.goto(IMAGE_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  
+  streamLive(); // Mulai siaran langsung!
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
   emitLog(`[${account.email}] Menutup pop-up (jika ada)...`);
@@ -761,32 +774,27 @@ async function generateImageOnPage(account, params, taskId) {
   const clickText = async (txt) => {
     if (!txt) return;
     await page.evaluate((textToFind) => {
-      // Cari nama provider/model di semua elemen yang bisa diklik
       const els = Array.from(document.querySelectorAll('button, [role="combobox"], [role="option"], [role="tab"]'));
-      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0])); // Ambil kata pertama saja agar lebih cocok
+      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0]));
       if (target) target.click();
     }, txt);
   };
   
-  await clickText(params.provider); // Contoh: "Imagen"
+  await clickText(params.provider);
   await sleep(500);
-  await clickText(params.model);    // Contoh: "Nano"
+  await clickText(params.model);
   await sleep(1000);
 
-  emitLog(`[${account.email}] Mengetik prompt...`);
+  emitLog(`[${account.email}] Mengetik prompt (Metode Ketik Manual)...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  await page.evaluate((sel, textVal) => {
-    const el = document.querySelector(sel);
-    if(el) {
-      const nativeInputValueSetter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value").set;
-      nativeInputValueSetter.call(el, textVal);
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-    }
-  }, promptSelector, params.prompt);
-  
-  await page.click(promptSelector);
+  // KLIK 3X LALU KETIK (Trik Paling Ampuh Tembus Keamanan React)
+  await page.click(promptSelector, { clickCount: 3 });
+  await sleep(300);
+  await page.keyboard.press('Backspace');
+  await sleep(300);
+  await page.type(promptSelector, params.prompt, { delay: 40 });
   await page.keyboard.press('Space');
   await sleep(1000);
 
@@ -808,7 +816,7 @@ async function generateImageOnPage(account, params, taskId) {
   }
 
   // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL)
-  emitLog(`[${account.email}] Menyetujui syarat/kebijakan...`);
+  emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
   await page.evaluate(() => {
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
     checkboxes.forEach(cb => {
@@ -832,7 +840,7 @@ async function generateImageOnPage(account, params, taskId) {
     const btns = Array.from(document.querySelectorAll('button'));
     const target = btns.find(b => {
       const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      const isGen = txt.includes('generate'); // BACA SEMUA TOMBOL YG MENGANDUNG KATA GENERATE
+      const isGen = txt.includes('generate');
       const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
       return isGen && !isLocked;
     });
@@ -867,12 +875,6 @@ async function generateImageOnPage(account, params, taskId) {
 
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
-
-    if (i === 15) {
-       emitLog(`[${account.email}] Cek CCTV Layar...`);
-       await captureDebugSnapshot(page, account, `STUCK-AT-20`);
-       emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-20.png`);
-    }
 
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
