@@ -600,26 +600,28 @@ async function restoreSessionToPage(page, account) {
    HELPER AUTO-NUKE POP-UP & POLICY (REAL-TIME BACKGROUND)
 =================================================================== */
 async function clearOverlaysAndCheckboxes(page, email) {
-  emitLog(`[${email}] Memasang radar Auto-Nuke untuk pop-up...`);
+  emitLog(`[${email}] Memasang radar Auto-Nuke untuk pop-up & Checkbox...`);
+  
   await page.evaluate(() => {
     if (window.nukeInterval) {
        clearInterval(window.nukeInterval);
     }
+    
     window.nukeInterval = setInterval(() => {
-      // 1. Hancurkan Pop-up Button (Filter text pendek agar tidak klik sembarangan)
-      const clickables = document.querySelectorAll('button, a, [role="button"], span, div');
+      // 1. Hancurkan Pop-up Button
+      const clickables = document.querySelectorAll('button, a, [role="button"]');
       clickables.forEach(btn => {
         const txt = (btn.innerText || '').toLowerCase().trim();
         const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
         
-        if ((txt.includes('got it') && txt.length < 20) || txt === 'ok' || txt === "don't show again" || aria.includes('close') || aria === 'dismiss') {
-          if (btn.offsetHeight > 0) {
+        if (txt === "don't show again" || txt === "ok" || txt === "got it" || txt === "dismiss" || aria.includes('close')) {
+          if (btn.offsetParent !== null && !btn.disabled) {
             btn.click();
           }
         }
       });
 
-      // 2. Hancurkan SVG Close Icon (X)
+      // 2. Hancurkan SVG Close Icon
       const svgs = document.querySelectorAll('svg');
       svgs.forEach(svg => {
          const parentBtn = svg.closest('button, [role="button"]');
@@ -633,32 +635,30 @@ async function clearOverlaysAndCheckboxes(page, email) {
       });
 
       // 3. Centang Kotak Kuning
-      const labels = document.querySelectorAll('label, div, span, p');
-      labels.forEach(el => {
-        const text = (el.innerText || '').toLowerCase();
-        if (text.includes('i understand that intentionally') || text.includes('acceptable use policy')) {
-          const cb = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
-          if (cb) {
-            if (!cb.checked) {
-              cb.click();
-              el.click();
-            }
-          } else {
-            if (el.dataset.nuked !== "true" && el.offsetHeight > 0) {
-              el.click();
-              el.dataset.nuked = "true";
-            }
+      const elements = Array.from(document.querySelectorAll('label, p, span, div'));
+      const policyEl = elements.find(el => el.innerText && el.innerText.toLowerCase().includes('i understand that intentionally'));
+      
+      if (policyEl) {
+        const container = policyEl.closest('label') || policyEl.parentElement;
+        if (container) {
+          const customCb = container.querySelector('[role="checkbox"]');
+          if (customCb && customCb.getAttribute('aria-checked') !== 'true') {
+            customCb.click();
+          }
+          
+          const nativeCb = container.querySelector('input[type="checkbox"]');
+          if (nativeCb && !nativeCb.checked) {
+            nativeCb.click();
+            nativeCb.dispatchEvent(new Event('change', { bubbles: true }));
           }
         }
-      });
+      }
 
       // 4. Force check checkbox kosong
       document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         if (!cb.checked) {
            cb.click();
-           if(cb.parentElement) {
-             cb.parentElement.click();
-           }
+           cb.dispatchEvent(new Event('change', { bubbles: true }));
         }
       });
     }, 1000);
@@ -797,6 +797,31 @@ async function generateVideoOnPage(account, params, taskId) {
   const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
 
   await clearOverlaysAndCheckboxes(page, account.email);
+
+  emitLog(`[${account.email}] Memastikan centang kotak kuning policy...`);
+  const policyCoords = await page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll('label, p, div, span'));
+    const target = els.find(e => e.innerText && e.innerText.toLowerCase().includes('i understand that intentionally'));
+    if (!target) return null;
+    
+    const checkbox = target.parentElement?.querySelector('[role="checkbox"]') || target.parentElement?.querySelector('input[type="checkbox"]');
+    if (checkbox) {
+       const rect = checkbox.getBoundingClientRect();
+       if(rect.width > 0 && rect.height > 0) return { x: rect.x + (rect.width/2), y: rect.y + (rect.height/2) };
+    }
+    
+    const rect = target.getBoundingClientRect();
+    return { x: rect.x + 10, y: rect.y + 10 };
+  });
+
+  if (policyCoords) {
+    await page.mouse.move(policyCoords.x, policyCoords.y);
+    await sleep(200);
+    await page.mouse.down();
+    await sleep(100);
+    await page.mouse.up();
+    await sleep(1000);
+  }
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
   
@@ -985,6 +1010,31 @@ async function generateImageOnPage(account, params, taskId) {
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
   await clearOverlaysAndCheckboxes(page, account.email);
+
+  emitLog(`[${account.email}] Memastikan centang kotak kuning policy...`);
+  const policyCoordsImg = await page.evaluate(() => {
+    const els = Array.from(document.querySelectorAll('label, p, div, span'));
+    const target = els.find(e => e.innerText && e.innerText.toLowerCase().includes('i understand that intentionally'));
+    if (!target) return null;
+    
+    const checkbox = target.parentElement?.querySelector('[role="checkbox"]') || target.parentElement?.querySelector('input[type="checkbox"]');
+    if (checkbox) {
+       const rect = checkbox.getBoundingClientRect();
+       if(rect.width > 0 && rect.height > 0) return { x: rect.x + (rect.width/2), y: rect.y + (rect.height/2) };
+    }
+    
+    const rect = target.getBoundingClientRect();
+    return { x: rect.x + 10, y: rect.y + 10 };
+  });
+
+  if (policyCoordsImg) {
+    await page.mouse.move(policyCoordsImg.x, policyCoordsImg.y);
+    await sleep(200);
+    await page.mouse.down();
+    await sleep(100);
+    await page.mouse.up();
+    await sleep(1000);
+  }
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
   
