@@ -606,20 +606,37 @@ async function clearOverlaysAndCheckboxes(page, email) {
        clearInterval(window.nukeInterval);
     }
     window.nukeInterval = setInterval(() => {
-      const allEls = document.querySelectorAll('button, a, span, div, [role="button"]');
-      allEls.forEach(el => {
-        const txt = (el.innerText || '').toLowerCase().trim();
-        const aria = (el.getAttribute('aria-label') || '').toLowerCase();
-        if (txt === 'got it' || txt === 'i got it!' || txt === 'got it!' || txt === 'ok' || txt === "don't show again" || aria.includes('close') || aria === 'dismiss') {
-          if (el.offsetHeight > 0) {
-            el.click();
+      // 1. Hancurkan Pop-up Button (Filter text pendek agar tidak klik sembarangan)
+      const clickables = document.querySelectorAll('button, a, [role="button"], span, div');
+      clickables.forEach(btn => {
+        const txt = (btn.innerText || '').toLowerCase().trim();
+        const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+        
+        if ((txt.includes('got it') && txt.length < 20) || txt === 'ok' || txt === "don't show again" || aria.includes('close') || aria === 'dismiss') {
+          if (btn.offsetHeight > 0) {
+            btn.click();
           }
         }
       });
+
+      // 2. Hancurkan SVG Close Icon (X)
+      const svgs = document.querySelectorAll('svg');
+      svgs.forEach(svg => {
+         const parentBtn = svg.closest('button, [role="button"]');
+         if (parentBtn && parentBtn.offsetHeight > 0) {
+            const aria = (parentBtn.getAttribute('aria-label') || '').toLowerCase();
+            const classes = (svg.getAttribute('class') || '').toLowerCase();
+            if (aria.includes('close') || aria.includes('dismiss') || classes.includes('close')) {
+               parentBtn.click();
+            }
+         }
+      });
+
+      // 3. Centang Kotak Kuning
       const labels = document.querySelectorAll('label, div, span, p');
       labels.forEach(el => {
         const text = (el.innerText || '').toLowerCase();
-        if (text.includes('i understand that intentionally') || text.includes('policy')) {
+        if (text.includes('i understand that intentionally') || text.includes('acceptable use policy')) {
           const cb = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
           if (cb) {
             if (!cb.checked) {
@@ -634,6 +651,8 @@ async function clearOverlaysAndCheckboxes(page, email) {
           }
         }
       });
+
+      // 4. Force check checkbox kosong
       document.querySelectorAll('input[type="checkbox"]').forEach(cb => {
         if (!cb.checked) {
            cb.click();
@@ -642,8 +661,9 @@ async function clearOverlaysAndCheckboxes(page, email) {
            }
         }
       });
-    }, 1500);
+    }, 1000);
   }).catch(() => {});
+  
   await new Promise(r => setTimeout(r, 2000)); 
 }
 
