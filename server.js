@@ -639,38 +639,72 @@ async function generateVideoOnPage(account, params, taskId) {
   const browser = await launchBrowserForAccount(account);
   const page = await newPageWithProxyAuth(browser, account);
 
+  // === FITUR BARU: LIVE VIEW STREAMING ===
+  const streamLive = async () => {
+    while(!page.isClosed()) {
+      try {
+        const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 20 });
+        if(ioInstance) ioInstance.emit('live-view', { taskId, frame: `data:image/jpeg;base64,${b64}` });
+        await sleep(1500);
+      } catch(e) { break; }
+    }
+  };
+
   await restoreSessionToPage(page, account);
   await page.goto(VIDEO_GEN_URL, { waitUntil: 'networkidle2', timeout: 60000 });
+  
+  streamLive(); // Mulai siaran langsung!
   emitProgress(taskId, { status: 'queued', progress: 5 });
 
-  // 1. Tunggu Textarea Prompt Muncul
+  emitLog(`[${account.email}] Menutup pop-up (jika ada)...`);
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const closeBtns = btns.filter(b => {
+      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      return t.includes('got it') || t.includes('close') || t.includes('ok');
+    });
+    closeBtns.forEach(b => b.click());
+  }).catch(() => {});
+  await sleep(1000);
+
+  emitLog(`[${account.email}] Memilih Provider & Model...`);
+  const clickText = async (txt) => {
+    if (!txt) return;
+    await page.evaluate((textToFind) => {
+      const els = Array.from(document.querySelectorAll('button, [role="combobox"], [role="option"], [role="tab"]'));
+      const target = els.find(e => e.innerText && e.innerText.trim().toLowerCase().includes(textToFind.toLowerCase().split(' ')[0]));
+      if (target) target.click();
+    }, txt);
+  };
+  
+  await clickText(params.provider);
+  await sleep(500);
+  await clickText(params.model);
+  await sleep(1000);
+
+  emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
   const promptSelector = 'textarea[placeholder*="video" i]';
   await page.waitForSelector(promptSelector, { timeout: 30000 });
 
-  await page.click(promptSelector);
-  await page.type(promptSelector, params.prompt, { delay: 10 });
+  await page.click(promptSelector, { clickCount: 3 });
+  await sleep(300);
+  await page.keyboard.press('Backspace');
+  await sleep(300);
+  await page.type(promptSelector, params.prompt, { delay: 40 });
+  await page.keyboard.press('Space');
+  await sleep(1000);
 
-  // 2. Helper Cerdas untuk klik tombol setingan (Resolusi, Aspek Rasio, Durasi)
+  emitLog(`[${account.email}] Memilih orientasi, resolusi & durasi...`);
   const clickAria = async (lbl) => {
     if (!lbl) return;
     const btn = await page.$(`button[aria-label="${lbl}"]`);
     if (btn) await btn.click().catch(() => {});
   };
 
-  const clickText = async (txt) => {
-    await page.evaluate((textToFind) => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const target = btns.find(b => b.innerText && b.innerText.trim().includes(textToFind));
-      if (target) target.click();
-    }, txt);
-  };
+  await clickAria(params.orientation); 
+  await clickAria(params.resolution);
+  await clickAria(String(params.duration));
 
-  // 3. Terapkan Parameter User
-  await clickAria(params.orientation); // contoh: "16:9"
-  await clickAria(params.resolution);  // contoh: "720p"
-  await clickAria(String(params.duration)); // contoh: "8"
-
-  // 4. Image Reference (Jika ada)
   if (params.imageReference && params.imageReference.localPath) {
     const fileInputs = await page.$$('input[type="file"]');
     if (fileInputs.length > 0) {
@@ -678,41 +712,92 @@ async function generateVideoOnPage(account, params, taskId) {
     }
   }
 
-  // 5. Bypass Captcha (Jika Terdeteksi)
+  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL)
+  emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
+  await page.evaluate(() => {
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+      if (!cb.checked) cb.click();
+    });
+  }).catch(() => {});
+  await sleep(1000);
+
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
     await detectAndSolveCaptcha(page, capProvider, capKey).catch(() => {});
   }
 
   emitProgress(taskId, { status: 'processing', progress: 15 });
-
-  // 6. Simpan daftar video sebelum klik generate
+  
   const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
 
-  // 7. Klik tombol "Generate Video"
-  await clickText('Generate Video');
+  emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
+  
+  const btnBox = await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find(b => {
+      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      const isGen = txt.includes('generate');
+      const isLocked = b.disabled || b.getAttribute('aria-disabled') === 'true';
+      return isGen && !isLocked;
+    });
+    if (!target) return null;
+    target.scrollIntoView({ block: 'center' });
+    const rect = target.getBoundingClientRect();
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  });
 
-  // 8. Tunggu Hasil Selesai
+  if (!btnBox) {
+    emitLog(`[ERROR] Tombol Generate tetap terkunci / tidak ketemu!`);
+    await captureDebugSnapshot(page, account, `BTN-LOCKED-VID`);
+    throw new Error(`Tombol Generate masih terkunci. Cek: ${ENV.BASE_URL}/debug/BTN-LOCKED-VID.png`);
+  }
+
+  await page.mouse.move(btnBox.x, btnBox.y);
+  await sleep(300);
+  await page.mouse.down();
+  await sleep(100);
+  await page.mouse.up();
+  
+  await page.evaluate(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    const target = btns.find(b => {
+      const txt = b.innerText ? b.innerText.trim().toLowerCase() : '';
+      return txt.includes('generate') && !b.disabled;
+    });
+    if (target) target.click();
+  }).catch(() => {});
+
   let progress = 15, completed = false, resultUrl = null;
 
   for (let i = 0; i < 120; i++) {
     await sleep(5000);
 
-    // Update Progress Bar
+    if (i === 10) {
+       emitLog(`[${account.email}] Cek CCTV Layar...`);
+       await captureDebugSnapshot(page, account, `STUCK-AT-15`);
+       emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-15.png`);
+    }
+
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
        return match ? parseInt(match[1]) : null;
     });
     if (pct && pct > progress) progress = pct;
 
-    // Cek apakah ada video baru yang muncul
     const currentVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
-    const newVideo = currentVideos.find(src => src && !existingVideos.includes(src) && !src.startsWith('data:'));
+    const newVideo = currentVideos.find(src => 
+      src && 
+      !existingVideos.includes(src) && 
+      !src.startsWith('data:') &&
+      src.includes('blob')
+    );
 
     if (newVideo) {
       resultUrl = newVideo;
       completed = true;
       progress = 100;
+      emitLog(`[${account.email}] 🎉 HASIL VIDEO ASLI DITEMUKAN!`);
     }
 
     emitProgress(taskId, { status: completed ? 'completed' : 'processing', progress });
@@ -720,11 +805,11 @@ async function generateVideoOnPage(account, params, taskId) {
   }
 
   if (!completed || !resultUrl) {
+    await captureDebugSnapshot(page, account, `FAILED-GENERATE-VID`);
     await page.close().catch(() => {});
-    throw new Error('Generate video timeout atau gagal mendapatkan hasil');
+    throw new Error(`Gagal dapat hasil asli. Cek foto: ${ENV.BASE_URL}/debug/${account.id}_FAILED-GENERATE-VID.png`);
   }
 
-  // 9. Download Hasil Video
   const fileName = `video_${taskId}.mp4`;
   const localPath = path.join(DOWNLOADS_DIR, fileName);
   await downloadRemoteFile(page, resultUrl, localPath);
