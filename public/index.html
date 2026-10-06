@@ -72,6 +72,9 @@
     <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="apidocs" onclick="switchMainTab('apidocs')">
       <i class="fa fa-code"></i> API Docs
     </button>
+    <button class="tab-btn px-4 py-2 rounded-lg font-medium text-sm whitespace-nowrap bg-gray-200" data-tab="extractor" onclick="switchMainTab('extractor')">
+      <i class="fa fa-bug"></i> UI Extractor
+    </button>
   </div>
 
   <!-- ===================== TAB: DASHBOARD ===================== -->
@@ -366,6 +369,24 @@
           <i class="fa fa-save"></i> Simpan Pengaturan
         </button>
       </form>
+    </div>
+  </div>
+
+  <!-- ===================== TAB: UI EXTRACTOR ===================== -->
+  <div id="tabPanel-extractor" class="main-tab-panel p-4 md:p-6 max-w-4xl mx-auto hidden space-y-6">
+    <div class="bg-white rounded-xl shadow p-6">
+      <h2 class="text-xl font-bold mb-2"><i class="fa fa-spider text-indigo-600"></i> SnapGen UI Extractor</h2>
+      <p class="text-sm text-gray-600 mb-4">Gunakan alat ini <b>HANYA</b> jika SnapGen melakukan update tampilan dan tombol Generate error. Alat ini akan menyedot struktur tombol terbaru mereka (format JSON) tanpa memotong kredit, sehingga Anda bisa mengupdate script robot.</p>
+      
+      <div class="flex gap-4 flex-wrap">
+        <button onclick="extractUI('image')" class="bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-semibold flex-1 min-w-[200px]">
+          <i class="fa fa-image"></i> Ekstrak UI Image Gen
+        </button>
+        <button onclick="extractUI('video')" class="bg-indigo-600 hover:bg-indigo-700 text-white px-6 py-3 rounded-lg font-semibold flex-1 min-w-[200px]">
+          <i class="fa fa-film"></i> Ekstrak UI Video Gen
+        </button>
+      </div>
+      <div id="extractorResult" class="mt-4 hidden p-4 bg-gray-900 rounded-lg text-green-400 text-sm overflow-x-auto"></div>
     </div>
   </div>
 
@@ -983,6 +1004,33 @@ async function loadGallery() {
     `;
     grid.appendChild(card);
   });
+}
+
+/* =====================================================================
+   UI EXTRACTOR (DEBUGGER)
+===================================================================== */
+async function extractUI(type) {
+  showToast(`Memulai ekstraksi UI ${type}... Mohon tunggu ~10 detik`, 'info');
+  const resBox = document.getElementById('extractorResult');
+  resBox.classList.remove('hidden');
+  resBox.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Robot sedang menyedot data dari SnapGen...';
+  
+  try {
+    const res = await fetch('/api/admin/debug/dump', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type })
+    });
+    const data = await res.json();
+    if (data.success) {
+      const fullUrl = window.location.origin + data.url;
+      resBox.innerHTML = `✅ Sukses! Link JSON DOM ${type.toUpperCase()}: <br><br> <a href="${fullUrl}" target="_blank" class="text-blue-400 underline">${fullUrl}</a>`;
+      showToast('Ekstraksi selesai!', 'success');
+    } else {
+      resBox.innerHTML = `❌ Gagal: ${data.message}`;
+    }
+  } catch (e) {
+    resBox.innerHTML = `❌ Error koneksi: ${e.message}`;
+  }
 }
 
 /* =====================================================================
