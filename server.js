@@ -845,6 +845,10 @@ async function generateVideoOnPage(account, params, taskId) {
        await captureDebugSnapshot(page, account, `STUCK-AT-15`);
        emitLog(`[📸 CCTV] Cek layar di sini: ${ENV.BASE_URL}/debug/${account.id}_STUCK-AT-15.png`);
     }
+    await page.evaluate(() => {
+      const b = Array.from(document.querySelectorAll('button')).find(x => (x.innerText || '').toLowerCase().includes('generate') && !x.disabled && x.getAttribute('aria-disabled') !== 'true');
+      if (b) { b.click(); }
+    }).catch(() => {});
 
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
