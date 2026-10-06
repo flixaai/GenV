@@ -1333,6 +1333,40 @@ adminRouter.post('/upload', upload.single('file'), (req, res) => {
   });
 });
 
+// ---- DEBUGGER / UI EXTRACTOR (Untuk Update Web SnapGen) ----
+adminRouter.post('/debug/dump', async (req, res) => {
+  try {
+    const type = req.body.type || 'image';
+    const account = await AccountManager.getOptimalAccount(1);
+    if (!account) return res.status(400).json({ success: false, message: 'Tidak ada akun aktif/berkredit' });
+
+    const browser = await launchBrowserForAccount(account);
+    const page = await newPageWithProxyAuth(browser, account);
+    await restoreSessionToPage(page, account);
+    
+    const targetUrl = type === 'video' ? VIDEO_GEN_URL : IMAGE_GEN_URL;
+    await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 });
+    await sleep(5000);
+
+    const dumpData = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll('button, input, textarea, select, [role="combobox"], [role="option"]')).map(el => ({
+        tag: el.tagName, type: el.type || '', name: el.name || '',
+        id: el.id || '', className: el.className || '', placeholder: el.placeholder || '',
+        text: el.innerText ? el.innerText.substring(0, 100) : '', ariaLabel: el.getAttribute('aria-label') || ''
+      }));
+    });
+
+    const fileName = `${account.id}_${type}gen-dump.json`;
+    const dumpPath = path.join(DEBUG_DIR, fileName);
+    await fs.writeJson(dumpPath, dumpData, { spaces: 2 });
+    await page.close().catch(() => {});
+    
+    res.json({ success: true, url: `/debug/${fileName}` });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ---- DIRECT GENERATE DARI DASHBOARD ----
 adminRouter.post('/generate/video', async (req, res) => {
   emitLog('Menerima perintah Generate Video dari dashboard...');
