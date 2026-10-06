@@ -1484,6 +1484,70 @@ adminRouter.post('/upload', upload.single('file'), (req, res) => {
   });
 });
 
+// ---- TEST KONEKSI & SALDO (PROXY & CAPTCHA) ----
+adminRouter.post('/debug/test-connection', async (req, res) => {
+  try {
+    const { captchaProvider, captchaApiKey, proxy } = req.body;
+    let resultMsg = [];
+
+    // 1. Cek Saldo API Captcha
+    if (captchaProvider !== 'none' && captchaApiKey) {
+      try {
+        if (captchaProvider === '2captcha' || captchaProvider === 'rucaptcha') {
+          const r = await axios.get(`https://2captcha.com/res.php?key=${captchaApiKey}&action=getbalance&json=1`);
+          if (r.data.status === 1) { resultMsg.push(`✅ [${captchaProvider}] Status API Aktif! Saldo Sisa: $${r.data.request}`); }
+          else { resultMsg.push(`❌ [${captchaProvider}] Error: API Key Salah / Ditolak Server`); }
+        } else if (captchaProvider === 'capsolver') {
+          const r = await axios.post('https://api.capsolver.com/getBalance', { clientKey: captchaApiKey });
+          if (r.data.errorId === 0) { resultMsg.push(`✅ [CapSolver] Status API Aktif! Saldo Sisa: $${r.data.balance}`); }
+          else { resultMsg.push(`❌ [CapSolver] Error: ${r.data.errorDescription}`); }
+        } else if (captchaProvider === 'anticaptcha') {
+          const r = await axios.post('https://api.anti-captcha.com/getBalance', { clientKey: captchaApiKey });
+          if (r.data.errorId === 0) { resultMsg.push(`✅ [Anti-Captcha] Status API Aktif! Saldo Sisa: $${r.data.balance}`); }
+          else { resultMsg.push(`❌ [Anti-Captcha] Error: ${r.data.errorDescription}`); }
+        } else {
+          resultMsg.push(`✅ [${captchaProvider}] API Key berhasil dideteksi sistem. (Cek saldo nominal khusus via web provider).`);
+        }
+      } catch (e) {
+        resultMsg.push(`❌ [${captchaProvider}] Gagal menghubungi server provider. Periksa koneksi.`);
+      }
+    } else {
+      resultMsg.push(`ℹ️ [Captcha] Mode Tanpa API / Web Unlocker diaktifkan.`);
+    }
+
+    // 2. Cek Koneksi Proxy (Mensimulasikan Browser Anti-Blokir)
+    if (proxy && proxy.host && proxy.port) {
+      resultMsg.push(`ℹ️ [Proxy] Mengecek jalur koneksi melewati ${proxy.host}:${proxy.port}...`);
+      try {
+        const browser = await puppeteer.launch({ 
+          headless: 'new', 
+          args: [
+            '--no-sandbox', '--disable-setuid-sandbox',
+            `--proxy-server=${proxy.type || 'http'}://${proxy.host}:${proxy.port}`,
+            '--ignore-certificate-errors', '--ignore-certificate-errors-spki-list'
+          ]
+        });
+        const page = await browser.newPage();
+        if (proxy.username) { await page.authenticate({ username: proxy.username, password: proxy.password }); }
+        
+        const resp = await page.goto('https://api.ipify.org?format=json', { timeout: 20000, waitUntil: 'domcontentloaded' });
+        const ipData = await resp.json();
+        await browser.close().catch(() => {});
+        
+        resultMsg.push(`✅ [Proxy] SUPER SUKSES! Internet menyala, IP Anda terdeteksi di-masking menjadi: ${ipData.ip}`);
+      } catch (e) {
+        resultMsg.push(`❌ [Proxy] Gagal Terhubung! (Penyebab: Timeout, Proxy Mati, atau Username/Password Salah).`);
+      }
+    } else {
+      resultMsg.push(`⚠️ [Proxy] Kolom Proxy Kosong, sistem akan memakai IP asli server VPS Anda.`);
+    }
+
+    res.json({ success: true, message: resultMsg.join('<br><br>') });
+  } catch (err) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 // ---- DEBUGGER / UI EXTRACTOR (Untuk Update Web SnapGen) ----
 adminRouter.post('/debug/dump', async (req, res) => {
   try {
