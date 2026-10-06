@@ -101,15 +101,29 @@ async function dbWrite(name, data) {
 }
 
 (async () => {
-  await dbRead('accounts', []);
+  const defaultProxy = {
+    host: process.env.PROXY_HOST || 'brd.superproxy.io',
+    port: process.env.PROXY_PORT || '44445',
+    username: process.env.PROXY_USER || 'brd-customer-hl_c154ff17-zone-web_unlocker1',
+    password: process.env.PROXY_PASS || '',
+    type: 'http'
+  };
   await dbRead('settings', {
     captchaProvider: 'none',
     captchaApiKey: '',
     captchaAutoSolve: false,
-    defaultProxy: { host: '', port: '', username: '', password: '', type: 'http' }
+    defaultProxy: defaultProxy
   });
   await dbRead('stats', { videoFromDashboard: 0, videoFromApi: 0, imageFromDashboard: 0, imageFromApi: 0 });
   await dbRead('tasks', []);
+  const accs = await dbRead('accounts', []);
+  if (accs.length === 0 && process.env.SNAPGEN_EMAIL && process.env.SNAPGEN_PASSWORD) {
+    await AccountManager.create({
+      email: process.env.SNAPGEN_EMAIL,
+      password: process.env.SNAPGEN_PASSWORD,
+      proxy: defaultProxy
+    });
+  }
 })();
 
 function genTaskId(prefix = 'TASK') {
