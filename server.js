@@ -823,6 +823,12 @@ async function generateVideoOnPage(account, params, taskId) {
     await sleep(1000);
   }
 
+  emitLog(`[${account.email}] Menekan tombol ESC untuk menghancurkan Pop-up dadakan...`);
+  await page.keyboard.press('Escape');
+  await sleep(500);
+  await page.keyboard.press('Escape');
+  await sleep(1000);
+
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
   
   const btnBox = await page.evaluate(() => {
@@ -1036,6 +1042,12 @@ async function generateImageOnPage(account, params, taskId) {
     await sleep(1000);
   }
 
+  emitLog(`[${account.email}] Menekan tombol ESC untuk menghancurkan Pop-up dadakan...`);
+  await page.keyboard.press('Escape');
+  await sleep(500);
+  await page.keyboard.press('Escape');
+  await sleep(1000);
+
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
   
   const btnBox = await page.evaluate(() => {
@@ -1077,6 +1089,16 @@ async function generateImageOnPage(account, params, taskId) {
 
   for (let i = 0; i < 60; i++) {
     await sleep(3000);
+
+    const isPremiumBlocked = await page.evaluate(() => {
+       const text = document.body.innerText.toLowerCase();
+       return text.includes('premium plan required') || text.includes('upgrade to premium');
+    });
+    if (isPremiumBlocked) {
+       emitLog(`[${account.email}] ❌ TERBLOKIR: Resolusi/Model ini butuh akun Premium!`);
+       await captureDebugSnapshot(page, account, `PREMIUM-BLOCKED-IMG`);
+       throw new Error(`Terblokir Paywall: Resolusi atau Model yang Anda pilih membutuhkan akun Premium di SnapGen. Silakan turunkan resolusi.`);
+    }
 
     const pct = await page.evaluate(() => {
        const match = document.body.innerText.match(/(\d+)%/);
