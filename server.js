@@ -332,14 +332,28 @@ async function detectAndSolveCaptcha(page, provider, apiKey) {
 =================================================================== */
 const activeBrowsers = new Map();
 
+async function getEffectiveProxy(account) {
+  if (account && account.proxy && account.proxy.host) {
+    return account.proxy;
+  }
+  try {
+    const settings = await dbRead('settings', {});
+    if (settings && settings.defaultProxy && settings.defaultProxy.host) {
+      return settings.defaultProxy;
+    }
+  } catch (e) {}
+  return null;
+}
+
 async function launchBrowserForAccount(account) {
   if (activeBrowsers.has(account.id)) {
     const existing = activeBrowsers.get(account.id);
-    if (existing.isConnected()) return existing;
+    if (existing.isConnected()) {
+      return existing;
+    }
     activeBrowsers.delete(account.id);
   }
 
-  // OPTIMASI RAM SUPER EKSTREM UNTUK RAILWAY (Mencegah OOM Crash)
   const args = [
     '--no-sandbox',
     '--disable-setuid-sandbox',
@@ -350,11 +364,16 @@ async function launchBrowserForAccount(account) {
     '--disable-accelerated-2d-canvas',
     '--disable-background-networking',
     '--disable-extensions',
-    '--js-flags="--max-old-space-size=256"' // Batasi RAM V8 Engine agar tidak bocor
+    '--ignore-certificate-errors',
+    '--ignore-certificate-errors-spki-list',
+    '--js-flags="--max-old-space-size=256"'
   ];
 
-  const proxyUrl = buildProxyUrl(account.proxy);
-  if (proxyUrl) args.push(`--proxy-server=${proxyUrl}`);
+  const effectiveProxy = await getEffectiveProxy(account);
+  const proxyUrl = buildProxyUrl(effectiveProxy);
+  if (proxyUrl) {
+    args.push(`--proxy-server=${proxyUrl}`);
+  }
 
   const browser = await puppeteer.launch({
     headless: ENV.HEADLESS ? 'new' : false,
@@ -364,22 +383,41 @@ async function launchBrowserForAccount(account) {
   });
 
   activeBrowsers.set(account.id, browser);
-  browser.on('disconnected', () => activeBrowsers.delete(account.id));
+  browser.on('disconnected', () => {
+    activeBrowsers.delete(account.id);
+  });
   return browser;
 }
 
 async function newPageWithProxyAuth(browser, account) {
   const page = await browser.newPage();
-  if (account.proxy && account.proxy.username) {
-    await page.authenticate({ username: account.proxy.username, password: account.proxy.password });
+  const effectiveProxy = await getEffectiveProxy(account);
+  if (effectiveProxy && effectiveProxy.username) {
+    await page.authenticate({ username: effectiveProxy.username, password: effectiveProxy.password });
   }
   await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36');
   
-  // BLOKIR RESOURCE BERAT (Mencegah Railway Crash saat Generate Animasi)
+  // Radar Auto-Klik Cloudflare Turnstile (berjalan setiap 2 detik)
+  const turnstileWatcher = setInterval(async () => {
+    if (page.isClosed()) {
+      clearInterval(turnstileWatcher);
+      return;
+    }
+    try {
+      const cfIframe = await page.$('iframe[src*="challenges.cloudflare.com"]');
+      if (cfIframe) {
+        const box = await cfIframe.boundingBox();
+        if (box) {
+          emitLog(`[${account.email}] 🛡️ Cloudflare muncul! Mengklik kotak verifikasi...`);
+          await page.mouse.click(box.x + 35, box.y + (box.height / 2));
+        }
+      }
+    } catch (e) {}
+  }, 2000);
+
   await page.setRequestInterception(true);
   page.on('request', (req) => {
     const type = req.resourceType();
-    // Blokir Video/Media, Font, dan Script tracking yang memakan banyak RAM
     if (['media', 'font'].includes(type) || req.url().includes('analytics') || req.url().includes('tracking')) {
       req.abort();
     } else {
