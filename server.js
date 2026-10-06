@@ -320,51 +320,26 @@ async function detectAndSolveCaptcha(page, provider, apiKey) {
 =================================================================== */
 async function solveTurnstileWidget(page, email) {
   try {
-    // 1. Klik via Frame Internal
     for (const f of page.frames()) {
-      if (f.url().includes('challenges.cloudflare.com') || f.url().includes('turnstile')) {
-        const cb = await f.$('input[type="checkbox"], #challenge-stage, .ctp-checkbox-label, body');
-        if (cb) {
-          emitLog(`[${email}] 🛡️ Mendeteksi Cloudflare Turnstile di frame, mengklik...`);
-          await cb.click().catch(() => {});
+      const u = (f.url() || '').toLowerCase();
+      if (u.includes('challenges.cloudflare.com') || u.includes('turnstile')) {
+        const frameEl = await f.frameElement();
+        if (frameEl) {
+          const box = await frameEl.boundingBox();
+          if (box && box.width > 0 && box.height > 0) {
+            const clickX = box.x + 30;
+            const clickY = box.y + (box.height / 2);
+            emitLog(`[${email}] 🎯 Menembak mouse fisik ke kotak Cloudflare (${Math.round(clickX)}, ${Math.round(clickY)})...`);
+            await page.mouse.move(clickX, clickY, { steps: 5 });
+            await sleep(100);
+            await page.mouse.down();
+            await sleep(150);
+            await page.mouse.up();
+            await sleep(2000);
+            return;
+          }
         }
       }
-    }
-
-    // 2. Klik via Koordinat Pixel
-    const coords = await page.evaluate(() => {
-      const iframes = Array.from(document.querySelectorAll('iframe'));
-      for (const ifr of iframes) {
-        const src = (ifr.src || '').toLowerCase();
-        const title = (ifr.title || '').toLowerCase();
-        if (src.includes('cloudflare') || src.includes('challenge') || src.includes('turnstile') || title.includes('cloudflare')) {
-          const r = ifr.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) return { x: r.left + 30, y: r.top + (r.height / 2) };
-        }
-      }
-      const allDivs = Array.from(document.querySelectorAll('div, section, [role="dialog"]'));
-      const modal = allDivs.find(d => {
-        const t = (d.innerText || '').toLowerCase();
-        return t.includes("verify you're human") || t.includes("verify you are human");
-      });
-      if (modal) {
-        const ifr = modal.querySelector('iframe');
-        if (ifr) {
-          const r = ifr.getBoundingClientRect();
-          if (r.width > 0 && r.height > 0) return { x: r.left + 30, y: r.top + (r.height / 2) };
-        }
-      }
-      return null;
-    });
-
-    if (coords) {
-      emitLog(`[${email}] 🛡️ Mengklik kotak verifikasi Cloudflare di (${Math.round(coords.x)}, ${Math.round(coords.y)})...`);
-      await page.mouse.move(coords.x, coords.y, { steps: 5 });
-      await sleep(150);
-      await page.mouse.down();
-      await sleep(100);
-      await page.mouse.up();
-      await sleep(1000);
     }
   } catch (e) {}
 }
