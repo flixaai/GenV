@@ -335,21 +335,38 @@
       <h2 class="text-lg font-bold mb-4"><i class="fa fa-shield-halved text-indigo-600"></i> Pengaturan Captcha Solver</h2>
       <form id="settingsForm" class="space-y-4">
         <div>
-          <label class="text-xs font-medium text-gray-500">Provider Captcha</label>
-          <select id="captchaProvider" class="w-full border p-2 rounded-lg mt-1">
+          <label class="text-xs font-medium text-gray-500">Provider Captcha (Pilih & Ubah Kapan Saja)</label>
+          <select id="captchaProvider" class="w-full border p-2 rounded-lg mt-1 bg-gray-50 font-semibold text-gray-700">
+            <option value="none">❌ TANPA CAPTCHA (Gunakan Web Unlocker / Bright Data)</option>
             <option value="2captcha">2Captcha</option>
             <option value="capsolver">CapSolver</option>
             <option value="anticaptcha">Anti-Captcha</option>
             <option value="nextcaptcha">NextCaptcha</option>
+            <option value="anycaptcha">AnyCaptcha</option>
+            <option value="capmonster">CapMonster</option>
+            <option value="deathbycaptcha">DeathByCaptcha</option>
+            <option value="azcaptcha">AZCaptcha</option>
+            <option value="solverecaptcha">SolveRecaptcha</option>
+            <option value="rucaptcha">RuCaptcha</option>
+            <option value="truecaptcha">TrueCaptcha</option>
+            <option value="9kw">9kw.eu</option>
+            <option value="imagetyperz">ImageTyperz</option>
+            <option value="bypasscaptcha">BypassCaptcha</option>
+            <option value="bestcaptchasolver">BestCaptchaSolver</option>
           </select>
         </div>
         <div>
-          <label class="text-xs font-medium text-gray-500">API Key</label>
-          <input type="text" id="captchaApiKey" class="w-full border p-2 rounded-lg mt-1" placeholder="Masukkan API Key Captcha Solver">
+          <label class="text-xs font-medium text-gray-500">API Key (Akan menimpa ENV VPS secara otomatis)</label>
+          <input type="text" id="captchaApiKey" class="w-full border p-2 rounded-lg mt-1" placeholder="Kosongkan jika Anda memakai Web Unlocker / Bright Data / Zyte">
         </div>
-        <label class="flex items-center gap-2 text-sm">
-          <input type="checkbox" id="captchaAutoSolve" class="w-4 h-4"> Aktifkan Auto-Solve saat Login & Generate
+        <label class="flex items-center gap-2 text-sm mt-1 mb-2">
+          <input type="checkbox" id="captchaAutoSolve" class="w-4 h-4"> Aktifkan Auto-Solve API (HILANGKAN CENTANG jika pakai Bright Data)
         </label>
+        
+        <button type="button" onclick="testSettingsConnection()" class="bg-blue-50 hover:bg-blue-100 text-blue-700 px-4 py-3 rounded-lg text-sm font-bold w-full mt-2 border border-blue-200 transition">
+          <i class="fa fa-plug"></i> Cek Koneksi Proxy & Cek Saldo Captcha
+        </button>
+        <div id="testConnectionResult" class="text-xs mt-3 hidden p-3 rounded-lg font-mono"></div>
 
         <hr class="my-4">
         <h2 class="text-lg font-bold mb-2"><i class="fa fa-network-wired text-indigo-600"></i> Proxy Default (Fallback)</h2>
@@ -1072,6 +1089,47 @@ document.getElementById('settingsForm').addEventListener('submit', async (e) => 
   });
   showToast('Pengaturan berhasil disimpan!', 'success');
 });
+
+async function testSettingsConnection() {
+  const btn = document.querySelector('button[onclick="testSettingsConnection()"]');
+  const resBox = document.getElementById('testConnectionResult');
+  btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Robot Sedang Mengecek...';
+  resBox.classList.remove('hidden', 'bg-green-100', 'text-green-700', 'bg-red-100', 'text-red-700');
+  resBox.classList.add('bg-blue-100', 'text-blue-700');
+  resBox.innerHTML = 'Memeriksa status koneksi... (Proses ini butuh waktu ~15 detik)';
+  
+  try {
+    const payload = {
+      captchaProvider: document.getElementById('captchaProvider').value,
+      captchaApiKey: document.getElementById('captchaApiKey').value,
+      proxy: {
+        host: document.getElementById('defProxyHost').value,
+        port: document.getElementById('defProxyPort').value,
+        username: document.getElementById('defProxyUser').value,
+        password: document.getElementById('defProxyPass').value,
+        type: document.getElementById('defProxyType').value
+      }
+    };
+    const res = await fetch('/api/admin/debug/test-connection', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    
+    resBox.classList.remove('bg-blue-100', 'text-blue-700');
+    if (data.success) {
+      resBox.classList.add('bg-gray-900', 'text-green-400');
+      resBox.innerHTML = data.message;
+    } else {
+      resBox.classList.add('bg-red-100', 'text-red-700');
+      resBox.innerHTML = `❌ Gagal: ${data.message}`;
+    }
+  } catch(e) {
+    resBox.classList.remove('bg-blue-100', 'text-blue-700');
+    resBox.classList.add('bg-red-100', 'text-red-700');
+    resBox.innerHTML = `❌ Error Jaringan: API Server Mati / ${e.message}`;
+  }
+  btn.innerHTML = '<i class="fa fa-plug"></i> Cek Koneksi Proxy & Cek Saldo Captcha';
+}
 
 /* =====================================================================
    INIT
