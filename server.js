@@ -712,15 +712,18 @@ async function generateVideoOnPage(account, params, taskId) {
     }
   }
 
-  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL)
+  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL) - VERSI BACA TEKS
   emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
   await page.evaluate(() => {
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => {
-      if (!cb.checked) cb.click();
-    });
+    checkboxes.forEach(cb => { if (!cb.checked) cb.click(); });
+    
+    // Klik paksa teks persetujuan karena SnapGen menyembunyikan checkbox aslinya
+    const elements = Array.from(document.querySelectorAll('span, div, p, label'));
+    const agreeText = elements.find(el => el.innerText && el.innerText.includes('I understand that intentionally'));
+    if (agreeText) agreeText.click();
   }).catch(() => {});
-  await sleep(1000);
+  await sleep(1500);
 
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
@@ -911,15 +914,18 @@ async function generateImageOnPage(account, params, taskId) {
     }
   }
 
-  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL)
+  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL) - VERSI BACA TEKS
   emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
   await page.evaluate(() => {
     const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => {
-      if (!cb.checked) cb.click();
-    });
+    checkboxes.forEach(cb => { if (!cb.checked) cb.click(); });
+    
+    // Klik paksa teks persetujuan karena SnapGen menyembunyikan checkbox aslinya
+    const elements = Array.from(document.querySelectorAll('span, div, p, label'));
+    const agreeText = elements.find(el => el.innerText && el.innerText.includes('I understand that intentionally'));
+    if (agreeText) agreeText.click();
   }).catch(() => {});
-  await sleep(1000);
+  await sleep(1500);
 
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
