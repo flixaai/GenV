@@ -597,6 +597,51 @@ async function restoreSessionToPage(page, account) {
 }
 
 /* ===================================================================
+   HELPER PENGHANCUR POP-UP & PENCENTANG POLICY (AGRESIF)
+=================================================================== */
+async function clearOverlaysAndCheckboxes(page, email) {
+  emitLog(`[${email}] Membersihkan pop-up dan mencentang policy...`);
+  await page.evaluate(() => {
+    const buttons = Array.from(document.querySelectorAll('button'));
+    buttons.forEach(btn => {
+      const txt = (btn.innerText || '').trim().toLowerCase();
+      if (txt === 'got it!' || txt === 'got it' || txt === 'close' || txt === 'ok' || txt === 'i understand') {
+        btn.click();
+      }
+      const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+      if (ariaLabel.includes('close')) {
+        btn.click();
+      }
+    });
+
+    const labels = Array.from(document.querySelectorAll('label, div, span'));
+    labels.forEach(el => {
+      const text = (el.innerText || '').toLowerCase();
+      if (text.includes('i understand that intentionally') || text.includes('policy') || text.includes('guidelines')) {
+        const checkbox = el.querySelector('input[type="checkbox"]') || el.closest('label')?.querySelector('input[type="checkbox"]');
+        if (checkbox && !checkbox.checked) {
+          el.click();
+        } else if (!checkbox) {
+          el.click();
+        }
+      }
+    });
+
+    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+      if (!cb.checked) {
+         cb.click();
+         if (cb.parentElement) {
+            cb.parentElement.click();
+         }
+      }
+    });
+  }).catch(() => {});
+  
+  await new Promise(r => setTimeout(r, 1500)); 
+}
+
+/* ===================================================================
    VIDEO GENERATION FLOW
 =================================================================== */
 const VIDEO_GEN_URL = 'https://snapgen.ai/app/video-gen/veo';
@@ -680,7 +725,9 @@ async function generateVideoOnPage(account, params, taskId) {
   await clickText(params.provider);
   await sleep(500);
   await clickText(params.model);
-  await sleep(1000);
+  await sleep(1500);
+
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   emitLog(`[${account.email}] Mengetik prompt (Mouse Mode)...`);
   const promptSelector = 'textarea[placeholder*="video" i]';
@@ -712,18 +759,7 @@ async function generateVideoOnPage(account, params, taskId) {
     }
   }
 
-  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL) - VERSI BACA TEKS
-  emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
-  await page.evaluate(() => {
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => { if (!cb.checked) cb.click(); });
-    
-    // Klik paksa teks persetujuan karena SnapGen menyembunyikan checkbox aslinya
-    const elements = Array.from(document.querySelectorAll('span, div, p, label'));
-    const agreeText = elements.find(el => el.innerText && el.innerText.includes('I understand that intentionally'));
-    if (agreeText) agreeText.click();
-  }).catch(() => {});
-  await sleep(1500);
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
@@ -734,16 +770,7 @@ async function generateVideoOnPage(account, params, taskId) {
   
   const existingVideos = await page.evaluate(() => Array.from(document.querySelectorAll('video')).map(v => v.src));
 
-  // --- PENGHANCUR POP-UP FINAL (Tembakan Kedua) ---
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const closeBtns = btns.filter(b => {
-      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return t === 'got it' || t === 'got it!' || t === 'close' || t === 'ok';
-    });
-    closeBtns.forEach(b => b.click());
-  }).catch(() => {});
-  await sleep(1000);
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE VIDEO (Pakai Mouse Asli)!`);
   
@@ -882,7 +909,9 @@ async function generateImageOnPage(account, params, taskId) {
   await clickText(params.provider);
   await sleep(500);
   await clickText(params.model);
-  await sleep(1000);
+  await sleep(1500);
+
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   emitLog(`[${account.email}] Mengetik prompt (Metode Ketik Manual)...`);
   const promptSelector = 'textarea[placeholder*="image" i]';
@@ -914,18 +943,7 @@ async function generateImageOnPage(account, params, taskId) {
     }
   }
 
-  // PENGHANCUR CHECKBOX (WAJIB UNTUK GROK DLL) - VERSI BACA TEKS
-  emitLog(`[${account.email}] Menyetujui syarat/kebijakan (jika ada)...`);
-  await page.evaluate(() => {
-    const checkboxes = document.querySelectorAll('input[type="checkbox"]');
-    checkboxes.forEach(cb => { if (!cb.checked) cb.click(); });
-    
-    // Klik paksa teks persetujuan karena SnapGen menyembunyikan checkbox aslinya
-    const elements = Array.from(document.querySelectorAll('span, div, p, label'));
-    const agreeText = elements.find(el => el.innerText && el.innerText.includes('I understand that intentionally'));
-    if (agreeText) agreeText.click();
-  }).catch(() => {});
-  await sleep(1500);
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   const { provider: capProvider, apiKey: capKey, autoSolve } = await getCaptchaSettings();
   if (autoSolve && capKey) {
@@ -936,16 +954,7 @@ async function generateImageOnPage(account, params, taskId) {
   
   const existingImages = await page.evaluate(() => Array.from(document.querySelectorAll('img')).map(i => i.src));
 
-  // --- PENGHANCUR POP-UP FINAL (Tembakan Kedua) ---
-  await page.evaluate(() => {
-    const btns = Array.from(document.querySelectorAll('button'));
-    const closeBtns = btns.filter(b => {
-      const t = b.innerText ? b.innerText.trim().toLowerCase() : '';
-      return t === 'got it' || t === 'got it!' || t === 'close' || t === 'ok';
-    });
-    closeBtns.forEach(b => b.click());
-  }).catch(() => {});
-  await sleep(1000);
+  await clearOverlaysAndCheckboxes(page, account.email);
 
   emitLog(`[${account.email}] MENGKLIK TOMBOL GENERATE!`);
   
